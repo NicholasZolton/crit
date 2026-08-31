@@ -7540,6 +7540,14 @@
     updateTocPosition();
   }
 
+  function closePRPanel() {
+    const panel = document.getElementById('prPanel');
+    if (panel.classList.contains('pr-panel-hidden')) return false;
+    panel.classList.add('pr-panel-hidden');
+    updateTocPosition();
+    return true;
+  }
+
   async function readPRResponse(res) {
     const text = await res.text();
     if (!text) return {};
@@ -7948,8 +7956,7 @@
     closeBtn.setAttribute('aria-label', 'Close PR panel');
     closeBtn.innerHTML = '&#x2715;';
     closeBtn.addEventListener('click', function() {
-      document.getElementById('prPanel').classList.add('pr-panel-hidden');
-      updateTocPosition();
+      closePRPanel();
     });
     linkSection.appendChild(closeBtn);
 
@@ -9974,6 +9981,12 @@
   });
 
   document.addEventListener('keydown', function(e) {
+    const prPanel = document.getElementById('prPanel');
+    if (e.key === 'Escape' && !e.defaultPrevented && prPanel.contains(document.activeElement) && closePRPanel()) {
+      e.preventDefault();
+      document.getElementById('prToggle').focus();
+      return;
+    }
     const tag = document.activeElement.tagName;
     if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' || document.activeElement.isContentEditable) {
       if (e.key === 'Escape' && activeForms.length > 0) {
@@ -10201,6 +10214,8 @@
           focusedFilePath = null;
           focusedElement = null;
           clearKeyboardFocusTarget();
+        } else if (closePRPanel()) {
+          document.getElementById('prToggle').focus();
         }
         break;
       }

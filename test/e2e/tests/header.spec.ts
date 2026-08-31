@@ -90,6 +90,8 @@ test.describe('Review header', () => {
     const prLink = page.locator('#headerPrLink');
     await expect(prLink).toBeVisible();
     await expect(prLink).toHaveText('PR #42');
+    await expect(prLink.locator('.header-pr-external-icon')).toBeVisible();
+    await expect(page.locator('#prToggle .pr-toggle-icon')).toBeVisible();
     await expect(prLink).toHaveAttribute('href', 'https://github.com/example/project/pull/42');
     await expect(page.locator('#updateBtn')).toHaveCount(0);
   });
@@ -129,6 +131,17 @@ test.describe('Pull request panel', () => {
     await expect(panel.locator('.pr-panel-status-group').filter({ hasText: 'Checks' })).toContainText('test');
     await expect(panel.locator('.pr-panel-status-group').filter({ hasText: 'Reviews' })).toContainText('reviewer');
     await expect(panel.locator('.pr-panel-status-marker-success')).toHaveCount(2);
+  });
+
+  test('closes the pull request panel with Escape', async ({ page }) => {
+    await mockPRConfig(page);
+    await mockPRStatus(page, readyPRStatus());
+    await loadPage(page);
+    await openPRPanel(page);
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#prPanel')).toBeHidden();
+    await expect(page.locator('#prToggle')).toBeFocused();
   });
 
   test('renders blocking reasons and each check state', async ({ page }) => {

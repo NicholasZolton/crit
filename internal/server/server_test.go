@@ -3439,6 +3439,26 @@ func TestHandleBaseBranch_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestHandleBaseBranchFetch_MethodNotAllowed(t *testing.T) {
+	srv, _ := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/base-branch/fetch", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandleBaseBranchFetch_EmptyRef(t *testing.T) {
+	srv, _ := newTestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/base-branch/fetch", strings.NewReader(`{"ref":""}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
 // --- handleQR tests ---
 
 func TestHandleQR_Success(t *testing.T) {

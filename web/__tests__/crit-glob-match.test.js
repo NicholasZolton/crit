@@ -4,7 +4,7 @@ const path = require('node:path');
 
 // crit-glob-match.js exports via module.exports (dual-export pattern), so it
 // can be required directly in Node.
-const { matchOne, matchAny } = require(path.join(__dirname, '..', 'crit-glob-match.js'));
+const { matchOne, matchAny, isTestFile } = require(path.join(__dirname, '..', 'crit-glob-match.js'));
 
 test('*.ext — basename glob', () => {
   assert.ok(matchOne('yarn.lock', '*.lock'));
@@ -57,4 +57,23 @@ test('matchAny — empty / nullish pattern list', () => {
   assert.ok(!matchAny('yarn.lock', []));
   assert.ok(!matchAny('yarn.lock', null));
   assert.ok(!matchAny('yarn.lock', undefined));
+});
+
+test('isTestFile — conventional test directories and filenames', () => {
+  assert.ok(isTestFile('internal/server/server_test.go'));
+  assert.ok(isTestFile('web/__tests__/renderer.js'));
+  assert.ok(isTestFile('src/button.test.tsx'));
+  assert.ok(isTestFile('src/button.spec.ts'));
+  assert.ok(isTestFile('tests/integration/login.py'));
+  assert.ok(isTestFile('src/test_login.py'));
+  assert.ok(isTestFile('src/LoginServiceTest.java'));
+  assert.ok(isTestFile('src/login-service-test.js'));
+});
+
+test('isTestFile — does not fold ordinary source paths containing test text', () => {
+  assert.ok(!isTestFile('src/contest.go'));
+  assert.ok(!isTestFile('src/latest.ts'));
+  assert.ok(!isTestFile('src/testing/helpers.go'));
+  assert.ok(!isTestFile('docs/test-plan.md'));
+  assert.ok(!isTestFile(''));
 });

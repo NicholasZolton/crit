@@ -26,7 +26,6 @@
 .crit-mode-live #diffModeToggle,
 .crit-mode-live #prToggle,
 .crit-mode-live #tocToggle,
-.crit-mode-live #updateBtn { display: none !important; }
 
 /* #shareBtn is hidden in design/live mode (a running app is proxied — nothing
    self-contained to publish) but IS available in preview mode, which shares a

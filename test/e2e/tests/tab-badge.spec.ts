@@ -1,25 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
-import { clearAllComments } from './helpers';
+import { clearAllComments, setPageVisibility } from './helpers';
 
 // The bullet prefix the app prepends to document.title when the badge is active.
 const BADGE_PREFIX = '\u25CF ';
-
-// Override document.visibilityState / document.hidden in the page context so
-// the app sees the tab as hidden or visible on demand, then dispatch
-// visibilitychange so listeners (the badge-clearing one) fire.
-async function setVisibility(page: Page, visible: boolean) {
-  await page.evaluate((isVisible) => {
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      get: () => (isVisible ? 'visible' : 'hidden'),
-    });
-    Object.defineProperty(document, 'hidden', {
-      configurable: true,
-      get: () => !isVisible,
-    });
-    document.dispatchEvent(new Event('visibilitychange'));
-  }, visible);
-}
 
 // Load the page with ?test query param so the tab-badge test hook is exposed.
 async function loadPageWithTestParam(page: Page) {
@@ -39,7 +22,7 @@ test.describe('Tab-Ready Indicator', () => {
     expect(originalTitle.startsWith(BADGE_PREFIX)).toBe(false);
 
     // Simulate user tabbing away.
-    await setVisibility(page, false);
+    await setPageVisibility(page, false);
 
     // Trigger a round-complete — the server emits file-changed via SSE.
     await request.post('/api/round-complete');
@@ -51,7 +34,7 @@ test.describe('Tab-Ready Indicator', () => {
     await loadPageWithTestParam(page);
 
     // Force visible state so test behaves identically in headed and headless runs.
-    await setVisibility(page, true);
+    await setPageVisibility(page, true);
 
     await request.post('/api/round-complete');
 
@@ -64,11 +47,11 @@ test.describe('Tab-Ready Indicator', () => {
   test('prefix clears when visibility returns to visible', async ({ page, request }) => {
     await loadPageWithTestParam(page);
 
-    await setVisibility(page, false);
+    await setPageVisibility(page, false);
     await request.post('/api/round-complete');
     await expect.poll(() => page.title(), { timeout: 5000 }).toMatch(new RegExp('^' + BADGE_PREFIX));
 
-    await setVisibility(page, true);
+    await setPageVisibility(page, true);
 
     await expect.poll(() => page.title(), { timeout: 2000 }).not.toMatch(new RegExp('^' + BADGE_PREFIX));
   });

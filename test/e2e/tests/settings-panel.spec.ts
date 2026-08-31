@@ -221,7 +221,7 @@ test.describe('Settings Panel', () => {
     const pane = page.locator('.settings-pane[data-pane="settings"]');
     // Core cards — always rendered (in various states). Integration title varies
     // (AI Integration vs Integration Available); share title varies (Share vs Sharing enabled).
-    await expect(pane.locator('.config-card-title', { hasText: 'Account' })).toBeVisible();
+    await expect(pane.locator('.config-card-title', { hasText: 'Account' })).toHaveCount(0);
     await expect(pane.locator('.config-card-title', { hasText: 'Agent Command' })).toBeVisible();
     await expect(
       pane.locator('.config-card-title', { hasText: /AI Integration|Integration Available/ }).first(),

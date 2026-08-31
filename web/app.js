@@ -350,7 +350,6 @@
   let session = {};       // { mode, branch, base_ref, review_round, files: [...] }
   let files = [];         // [{ path, status, fileType, content, diffHunks, comments, lineBlocks, tocItems, collapsed, viewMode }]
   let shareURL = '';       // read by the tip-rotation block; share flow gets its own copy
-  let authUserName = '';   // read by the tip-rotation block; share flow gets its own copy
   let configAuthor = '';
   let autoViewedPatterns = [];  // config auto_viewed_patterns; applied once per launch (issue #658)
 
@@ -363,30 +362,6 @@
   let uiState = 'reviewing';
   let waitingNotApproved = false;
   let hiddenUnresolved = 0;
-  let pendingUpdates = [];
-  let pendingUpdatesVersion = '';
-
-  // Returns true if at least one pending update entry has not been dismissed.
-  // Brew dismiss is keyed by version; integration dismiss is keyed per-agent
-  // by content hash (so re-prompts when we ship a new template).
-  function hasActivePendingUpdates() {
-    if (!pendingUpdates.length) return false;
-    const brewDismissed = getSetting('updatesDismissed', '');
-    const intDismissed = getSetting('dismissedIntegrations', {}) || {};
-    for (let i = 0; i < pendingUpdates.length; i++) {
-      const u = pendingUpdates[i];
-      if (u.kind === 'brew') {
-        if (brewDismissed !== pendingUpdatesVersion) return true;
-      } else if (u.kind === 'integration') {
-        if (!u.hash || intDismissed[u.agent] !== u.hash) return true;
-      } else if (u.kind === 'missing-integration') {
-        if (!intDismissed['missing:' + u.agent]) return true;
-      } else {
-        return true;
-      }
-    }
-    return false;
-  }
 
   let reviewComments = []; // review-level (general) comments
   let reviewCommentFormActive = false; // is the review comment form open?
@@ -426,6 +401,12 @@
   // mode — the settings toggle is gated to git mode in renderSettingsPane().
   let ignoreWhitespace = !!getSetting('ignoreWhitespace', false);
 
+  // Collapse conventional test files on initial git-diff render. Unlike
+  // auto_viewed_patterns, these automatic viewed marks are not persisted as
+  // manual review state, so disabling the preference can safely undo them.
+  let collapseTestFiles = !!getSetting('collapseTestFiles', false);
+  const autoViewedTestPaths = new Set();
+
   // Single source of truth for hide-resolved state. Persisted via the
   // consolidated `crit-settings` cookie (not localStorage) so the setting
   // survives random-port server restarts — localStorage is scoped per origin
@@ -457,6 +438,17 @@
   let activeFilePath = null;
   let activeForms = [];  // Array of { formKey, filePath, afterBlockIndex, startLine, endLine, editingId, side }
   let prData = null;     // PR metadata from /api/config (set once on load)
+  let prStatus = null;
+  let prStatusLoading = false;
+  let prStatusError = '';
+  let prStatusPromise = null;
+  let prCommentsSyncPromise = null;
+  let prMergePending = false;
+  let prMergeMethod = '';
+  const PR_STATUS_POLL_MS = 60 * 1000;
+  const PR_COMMENTS_POLL_MS = 5 * 60 * 1000;
+  let lastPRStatusRefreshAt = 0;
+  let lastPRCommentsSyncAt = 0;
   let agentEnabled = false;
   let agentName = 'agent';
   const pendingAgentRequests = new Set();
@@ -754,10 +746,37 @@
     try { localStorage.setItem(autoViewedMarkerKey(), '1'); } catch {}
   }
 
+  function updateTestFileCollapse(collapsed) {
+    const globMatch = window.crit && window.crit.globMatch;
+    if (!globMatch || typeof globMatch.isTestFile !== 'function') return;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!globMatch.isTestFile(file.path)) continue;
+      if (collapsed) {
+        if (!file.viewed) autoViewedTestPaths.add(file.path);
+        file.viewed = true;
+        file.collapsed = true;
+      } else if (autoViewedTestPaths.delete(file.path)) {
+        file.viewed = false;
+        if (!file.lazy && !file.generated && file.status !== 'deleted' &&
+          !(file.status === 'renamed' && !file.additions && !file.deletions)) {
+          file.collapsed = false;
+        }
+      }
+    }
+    saveViewedState();
+    updateViewedCount();
+    updateTreeViewedState();
+  }
+
+  function applyTestFileCollapseDefault() {
+    if (session.mode === 'git' && collapseTestFiles) updateTestFileCollapse(true);
+  }
+
   function saveViewedState() {
     const viewed = {};
     for (let i = 0; i < files.length; i++) {
-      if (files[i].viewed) viewed[files[i].path] = true;
+      if (files[i].viewed && !autoViewedTestPaths.has(files[i].path)) viewed[files[i].path] = true;
     }
     try { localStorage.setItem(viewedStorageKey(), JSON.stringify(viewed)); } catch {}
   }
@@ -772,15 +791,16 @@
     } catch {}
   }
 
-  function toggleViewed(filePath) {
+  function setViewed(filePath, viewed) {
     const file = getFileByPath(filePath);
     if (!file) return;
-    file.viewed = !file.viewed;
+    autoViewedTestPaths.delete(filePath);
+    file.viewed = !!viewed;
     saveViewedState();
     updateViewedCount();
     updateTreeViewedState();
     // Update the checkbox in the file header
-    const section = document.getElementById('file-section-' + filePath);
+    const section = currentRenderedFileSection(filePath);
     if (section) {
       const cb = section.querySelector('.file-header-viewed input');
       if (cb) cb.checked = file.viewed;
@@ -790,9 +810,14 @@
           section.scrollIntoView({ behavior: 'instant' });
         }
         section.open = false;
-        file.collapsed = true;
       }
     }
+    if (file.viewed) file.collapsed = true;
+  }
+
+  function toggleViewed(filePath) {
+    const file = getFileByPath(filePath);
+    if (file) setViewed(filePath, !file.viewed);
   }
 
   // Wraps crit.shared.waitForSession with the app.js-specific UI:
@@ -876,7 +901,6 @@
     // Config
     shareURL = configRes.share_url || '';
     autoViewedPatterns = Array.isArray(configRes.auto_viewed_patterns) ? configRes.auto_viewed_patterns : [];
-    authUserName = configRes.auth_user_name || '';
     configAuthor = configRes.author || '';
     agentEnabled = configRes.agent_cmd_enabled || false;
     agentName = configRes.agent_name || 'agent';
@@ -895,7 +919,6 @@
       deleteToken: configRes.delete_token || '',
       hostedToken: configRes.hosted_token || '',
       needsShareConsent: configRes.needs_consent || false,
-      authUserName: authUserName,
       proxyAuth: !!configRes.proxy_auth,
       reviewType: configRes.review_type || '',
       sharedOrg: configRes.share_org
@@ -920,48 +943,6 @@
       project_prompt_content_hash: configRes.project_prompt_content_hash || '',
     };
     window.crit.shared.applyProjectPromptTrustUI(promptTrustConfig, document.getElementById('finishBtn'));
-
-    // Update notifications (brew upgrade + stale integrations)
-    pendingUpdates = [];
-    const hasBrew = configRes.latest_version && configRes.version && configRes.latest_version !== configRes.version;
-    if (hasBrew) {
-      pendingUpdates.push({
-        kind: 'brew',
-        version: configRes.latest_version,
-        label: 'Crit ' + configRes.latest_version + ' available',
-        labelUrl: 'https://github.com/tomasz-tomczyk/crit/releases/tag/v' + configRes.latest_version,
-        hint: 'brew update && brew upgrade crit'
-      });
-    }
-    if (configRes.stale_integrations) {
-      configRes.stale_integrations.forEach(function(si) {
-        // Capitalize agent name for display
-        const name = si.agent.replace(/\b\w/g, function(c) { return c.toUpperCase(); }).replace(/-/g, ' ');
-        pendingUpdates.push({
-          kind: 'integration',
-          agent: si.agent,
-          hash: si.hash || '',
-          label: name + ' plugin outdated',
-          hint: si.hint
-        });
-      });
-    }
-    if (configRes.missing_integrations) {
-      configRes.missing_integrations.forEach(function(agent) {
-        const name = agent.replace(/\b\w/g, function(c) { return c.toUpperCase(); }).replace(/-/g, ' ');
-        pendingUpdates.push({
-          kind: 'missing-integration',
-          agent: agent,
-          label: name + ' detected — install integration',
-          hint: 'crit install ' + agent
-        });
-      });
-    }
-
-    pendingUpdatesVersion = configRes.latest_version || configRes.version || '';
-    if (hasActivePendingUpdates()) {
-      document.getElementById('updateBtn').style.display = '';
-    }
 
     // Header context: branch name in git mode, filename in single-file file mode
     if (session.mode === 'git' && session.branch) {
@@ -1008,14 +989,8 @@
       document.getElementById('branchContext').appendChild(headerCopyBtn);
     }
 
-    // PR overview panel toggle
-    if (configRes.pr_url && configRes.pr_number) {
-      prData = configRes;
-      const prToggle = document.getElementById('prToggle');
-      prToggle.style.display = '';
-      document.getElementById('prToggleNumber').textContent = '#' + configRes.pr_number;
-      if (configRes.pr_is_draft) prToggle.classList.add('pr-toggle-draft');
-    }
+    applyPRInfo(configRes);
+    if (prData) lastPRCommentsSyncAt = Date.now();
 
     // Show diff mode toggle in git mode (always has diffs)
     // In file mode, it gets shown later via updateDiffModeToggle() once diffs exist
@@ -1087,6 +1062,7 @@
 
     restoreViewedState();
     applyAutoViewedOnce(autoViewedPatterns);
+    applyTestFileCollapseDefault();
     updateDiffModeToggle();
     renderFileTree();
     renderAllFiles();
@@ -1901,6 +1877,29 @@
       if (rect.bottom > 0) return { id: sections[i].id, top: rect.top };
     }
     return null;
+  }
+
+  function topVisibleFilePath() {
+    const appHeader = document.querySelector('.header');
+    const container = document.getElementById('filesContainer');
+    if (!container) return '';
+    const rect = container.getBoundingClientRect();
+    const headerBottom = appHeader ? appHeader.getBoundingClientRect().bottom : rect.top;
+    const x = Math.min(rect.right - 1, rect.left + 16);
+    const y = Math.min((window.innerHeight || document.documentElement.clientHeight) - 1,
+      Math.max(rect.top + 1, headerBottom + 16));
+    const hit = document.elementFromPoint(x, y);
+    const section = hit && hit.closest('#filesContainer .file-section[id]');
+    return section ? section.id.replace('file-section-', '') : '';
+  }
+
+  function nextUnviewedFilePath(startPath) {
+    const start = files.findIndex(function(file) { return file.path === startPath; });
+    if (start < 0) return '';
+    for (let i = start; i < files.length; i++) {
+      if (!files[i].viewed) return files[i].path;
+    }
+    return '';
   }
 
   // The line/block closest to the vertical center of the viewport — preferred
@@ -7493,6 +7492,39 @@
   }
 
   // ===== PR Overview Panel =====
+  function applyPRInfo(config) {
+    const focus = session && session.focus;
+    const rangePR = focus && focus.kind === 'range' && focus.pr_url;
+    const prURL = rangePR ? focus.pr_url : config && config.pr_url;
+    const prNumber = rangePR ? focus.change_number : config && config.pr_number;
+    const headerLink = document.getElementById('headerPrLink');
+    if (prURL) {
+      headerLink.href = prURL;
+      headerLink.style.display = '';
+      document.getElementById('headerPrLinkLabel').textContent = prNumber ? 'PR #' + prNumber : 'PR';
+      headerLink.setAttribute('aria-label', prNumber ? 'Open pull request #' + prNumber : 'Open pull request');
+    } else {
+      headerLink.removeAttribute('href');
+      headerLink.style.display = 'none';
+    }
+
+    if (config && config.pr_url && config.pr_number) {
+      prData = config;
+      const prToggle = document.getElementById('prToggle');
+      prToggle.style.display = '';
+      prToggle.classList.toggle('pr-toggle-draft', !!config.pr_is_draft);
+      document.getElementById('prToggleNumber').textContent = '#' + config.pr_number;
+    }
+  }
+
+  async function refreshPRInfo() {
+    try {
+      const res = await fetch('/api/config');
+      if (!res.ok) return;
+      applyPRInfo(await res.json());
+    } catch { /* PR detection is optional */ }
+  }
+
   function togglePRPanel() {
     const panel = document.getElementById('prPanel');
     const isHidden = panel.classList.contains('pr-panel-hidden');
@@ -7501,8 +7533,340 @@
     if (isHidden) {
       document.getElementById('commentsPanel').classList.add('comments-panel-hidden');
       renderPRPanel();
+      refreshPRStatus();
     }
     updateTocPosition();
+  }
+
+  async function readPRResponse(res) {
+    const text = await res.text();
+    if (!text) return {};
+    try { return JSON.parse(text); } catch { return { error: text }; }
+  }
+
+  function prResponseError(payload, fallback) {
+    return payload && typeof payload.error === 'string' && payload.error.trim()
+      ? payload.error.trim()
+      : fallback;
+  }
+
+  function showPRToast(message, kind) {
+    if (window.crit && window.crit.shared && window.crit.shared.showToast) {
+      window.crit.shared.showToast(message, { kind: kind || 'info' });
+    }
+  }
+
+  async function refreshPRStatus() {
+    if (prStatusPromise) return prStatusPromise;
+    lastPRStatusRefreshAt = Date.now();
+    prStatusLoading = true;
+    prStatusError = '';
+    renderPRPanel();
+    prStatusPromise = (async function() {
+      try {
+        const res = await fetch('/api/change/status');
+        const payload = await readPRResponse(res);
+        if (!res.ok) throw new Error(prResponseError(payload, 'Failed to load pull request status'));
+        prStatus = payload;
+        lastPRStatusRefreshAt = Date.now();
+      } catch (err) {
+        prStatusError = err && err.message ? err.message : 'Failed to load pull request status';
+      } finally {
+        prStatusLoading = false;
+        prStatusPromise = null;
+        renderPRPanel();
+      }
+    })();
+    return prStatusPromise;
+  }
+
+  async function syncPRComments(silent) {
+    if (prCommentsSyncPromise) return prCommentsSyncPromise;
+    lastPRCommentsSyncAt = Date.now();
+    prCommentsSyncPromise = (async function() {
+      try {
+        const res = await fetch('/api/change/comments/sync', { method: 'POST' });
+        const payload = await readPRResponse(res);
+        if (!res.ok) throw new Error(prResponseError(payload, 'Failed to sync comments'));
+        const added = typeof payload.added === 'number' ? payload.added : 0;
+        await refreshAllComments();
+        lastPRCommentsSyncAt = Date.now();
+        if (!silent) {
+          showPRToast(added === 0
+            ? 'Comments are up to date'
+            : added + ' comment' + (added === 1 ? '' : 's') + ' synced', 'success');
+        }
+      } catch (err) {
+        if (!silent) showPRToast(err && err.message ? err.message : 'Failed to sync comments', 'error');
+      } finally {
+        prCommentsSyncPromise = null;
+        renderPRPanel();
+      }
+    })();
+    renderPRPanel();
+    return prCommentsSyncPromise;
+  }
+
+  function pollPRData() {
+    if (!prData || document.visibilityState !== 'visible') return;
+    const now = Date.now();
+    const panel = document.getElementById('prPanel');
+    if (panel && !panel.classList.contains('pr-panel-hidden') && now - lastPRStatusRefreshAt >= PR_STATUS_POLL_MS) {
+      refreshPRStatus();
+    }
+    if (now - lastPRCommentsSyncAt >= PR_COMMENTS_POLL_MS) {
+      syncPRComments(true);
+    }
+  }
+
+  setInterval(pollPRData, PR_STATUS_POLL_MS);
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') pollPRData();
+  });
+
+  function normalizedPRState(state) {
+    return String(state || '').trim().toUpperCase();
+  }
+
+  function prStateTone(state, isReview) {
+    const value = normalizedPRState(state);
+    if (value === 'SUCCESS' || value === 'COMPLETED' || (isReview && value === 'APPROVED')) return 'success';
+    if (value === 'FAILURE' || value === 'ERROR' || value === 'CANCELLED' ||
+      value === 'TIMED_OUT' || value === 'ACTION_REQUIRED' || value === 'STARTUP_FAILURE' ||
+      (isReview && value === 'CHANGES_REQUESTED')) return 'failure';
+    if (value === 'PENDING' || value === 'QUEUED' || value === 'IN_PROGRESS' ||
+      value === 'WAITING' || value === 'EXPECTED' || value === 'REQUESTED') return 'pending';
+    return 'neutral';
+  }
+
+  function readablePRState(state) {
+    const value = String(state || '').trim().replace(/_/g, ' ').toLowerCase();
+    return value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Unknown';
+  }
+
+  function safePRURL(value) {
+    if (typeof value !== 'string' || !value.trim()) return '';
+    try {
+      const url = new URL(value, window.location.href);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+    } catch { return ''; }
+  }
+
+  function appendPRStatusList(section, title, entries, isReview) {
+    const group = document.createElement('div');
+    group.className = 'pr-panel-status-group';
+    const heading = document.createElement('div');
+    heading.className = 'pr-panel-section-title';
+    heading.textContent = title;
+    group.appendChild(heading);
+
+    const list = document.createElement('div');
+    list.className = 'pr-panel-status-list';
+    entries.forEach(function(entry) {
+      const row = document.createElement('div');
+      row.className = 'pr-panel-status-row';
+      const tone = prStateTone(entry.state, isReview);
+      const marker = document.createElement('span');
+      marker.className = 'pr-panel-status-marker pr-panel-status-marker-' + tone;
+      marker.setAttribute('aria-hidden', 'true');
+      row.appendChild(marker);
+
+      const name = document.createElement('span');
+      name.className = 'pr-panel-status-name';
+      name.textContent = isReview ? (entry.author || 'Unknown reviewer') : (entry.name || 'Unnamed check');
+      row.appendChild(name);
+
+      const state = document.createElement('span');
+      state.className = 'pr-panel-status-value pr-panel-status-value-' + tone;
+      state.textContent = readablePRState(entry.state);
+      row.appendChild(state);
+
+      const href = !isReview ? safePRURL(entry.url) : '';
+      if (href) {
+        const link = document.createElement('a');
+        link.className = 'pr-panel-status-link';
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.setAttribute('aria-label', 'Open ' + (entry.name || 'check'));
+        link.textContent = 'View';
+        row.appendChild(link);
+      }
+      list.appendChild(row);
+    });
+    group.appendChild(list);
+    section.appendChild(group);
+  }
+
+  function selectedPRMergeMethod(status) {
+    const methods = Array.isArray(status.allowed_merge_methods)
+      ? status.allowed_merge_methods.filter(function(method) { return method === 'merge' || method === 'squash' || method === 'rebase'; })
+      : [];
+    const defaultMethod = String(status.default_merge_method || '').toLowerCase();
+    if (methods.indexOf(prMergeMethod) !== -1) return prMergeMethod;
+    if (methods.indexOf(defaultMethod) !== -1) return defaultMethod;
+    if (methods.indexOf('squash') !== -1) return 'squash';
+    return methods[0] || '';
+  }
+
+  async function mergePullRequest() {
+    if (!prData || !prStatus || prStatusError || prMergePending || !prStatus.head_sha) return;
+    const queued = !!prStatus.base_requires_merge_queue;
+    const method = queued ? '' : selectedPRMergeMethod(prStatus);
+    const action = queued ? 'add to the merge queue' : 'merge using ' + (method || 'the repository default');
+    if (!window.confirm('PR #' + prData.pr_number + ': ' + action + '?')) return;
+
+    prMergePending = true;
+    renderPRPanel();
+    try {
+      const request = { head_sha: prStatus.head_sha };
+      if (!queued && method) request.method = method;
+      const res = await fetch('/api/change/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      const payload = await readPRResponse(res);
+      if (!res.ok) throw new Error(prResponseError(payload, 'Pull request is not ready to merge'));
+      showPRToast(payload.message || (payload.queued ? 'Added to merge queue' : 'Pull request merged'), 'success');
+      await refreshPRInfo();
+      await refreshPRStatus();
+    } catch (err) {
+      showPRToast(err && err.message ? err.message : 'Failed to merge pull request', 'error');
+    } finally {
+      prMergePending = false;
+      renderPRPanel();
+    }
+  }
+
+  function renderPRStatus(body) {
+    const section = document.createElement('section');
+    section.className = 'pr-panel-status-section';
+
+    const actions = document.createElement('div');
+    actions.className = 'pr-panel-actions';
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'pr-panel-action-btn';
+    refreshBtn.textContent = prStatusLoading ? 'Refreshing...' : 'Refresh';
+    refreshBtn.disabled = prStatusLoading;
+    refreshBtn.addEventListener('click', refreshPRStatus);
+    actions.appendChild(refreshBtn);
+    const syncBtn = document.createElement('button');
+    syncBtn.type = 'button';
+    syncBtn.className = 'pr-panel-action-btn';
+    syncBtn.textContent = prCommentsSyncPromise ? 'Syncing...' : 'Sync now';
+    syncBtn.disabled = !!prCommentsSyncPromise;
+    syncBtn.addEventListener('click', function() { syncPRComments(false); });
+    actions.appendChild(syncBtn);
+    section.appendChild(actions);
+
+    const readiness = document.createElement('div');
+    readiness.className = 'pr-panel-readiness';
+    const readinessTitle = document.createElement('div');
+    readinessTitle.className = 'pr-panel-readiness-title';
+    if (prStatusLoading && !prStatus) {
+      readiness.classList.add('pr-panel-readiness-loading');
+      readinessTitle.textContent = 'Loading merge readiness...';
+    } else if (prStatusError) {
+      readiness.classList.add('pr-panel-readiness-error');
+      readinessTitle.textContent = 'Status unavailable';
+    } else if (!prStatus) {
+      readiness.classList.add('pr-panel-readiness-loading');
+      readinessTitle.textContent = 'Merge readiness not loaded';
+    } else if (prStatus.queued === true) {
+      readiness.classList.add('pr-panel-readiness-ready');
+      readinessTitle.textContent = 'In merge queue';
+    } else if (prStatus.ready === true) {
+      readiness.classList.add('pr-panel-readiness-ready');
+      readinessTitle.textContent = 'Ready to merge';
+    } else {
+      readiness.classList.add('pr-panel-readiness-attention');
+      readinessTitle.textContent = 'Needs attention';
+    }
+    readiness.appendChild(readinessTitle);
+
+    if (prStatusError) {
+      const error = document.createElement('div');
+      error.className = 'pr-panel-readiness-detail';
+      error.textContent = prStatusError;
+      readiness.appendChild(error);
+    } else if (prStatus && prStatus.ready !== true) {
+      const reasons = Array.isArray(prStatus.blocking_reasons) ? prStatus.blocking_reasons : [];
+      if (reasons.length) {
+        const list = document.createElement('ul');
+        list.className = 'pr-panel-blocking-reasons';
+        reasons.forEach(function(reason) {
+          const item = document.createElement('li');
+          item.textContent = String(reason);
+          list.appendChild(item);
+        });
+        readiness.appendChild(list);
+      }
+    }
+    section.appendChild(readiness);
+
+    if (prStatus) {
+      const summary = document.createElement('div');
+      summary.className = 'pr-panel-status-summary';
+      const threads = document.createElement('span');
+      threads.textContent = typeof prStatus.unresolved_review_thread_count === 'number'
+        ? prStatus.unresolved_review_thread_count + ' unresolved thread' + (prStatus.unresolved_review_thread_count === 1 ? '' : 's')
+        : 'Unresolved threads unknown';
+      summary.appendChild(threads);
+      if (prStatus.review_decision) {
+        const decision = document.createElement('span');
+        decision.textContent = 'Review: ' + readablePRState(prStatus.review_decision);
+        summary.appendChild(decision);
+      }
+      section.appendChild(summary);
+
+      const checks = Array.isArray(prStatus.checks) ? prStatus.checks : [];
+      const reviews = Array.isArray(prStatus.latest_reviews) ? prStatus.latest_reviews : [];
+      if (checks.length) appendPRStatusList(section, 'Checks', checks, false);
+      if (reviews.length) appendPRStatusList(section, 'Reviews', reviews, true);
+
+      const isOpen = normalizedPRState(prData.pr_state || 'OPEN') === 'OPEN';
+      if (isOpen && !prData.pr_is_draft) {
+        const mergeActions = document.createElement('div');
+        mergeActions.className = 'pr-panel-merge-actions';
+        const methods = Array.isArray(prStatus.allowed_merge_methods)
+          ? prStatus.allowed_merge_methods.filter(function(method) { return method === 'merge' || method === 'squash' || method === 'rebase'; })
+          : [];
+        if (!prStatus.base_requires_merge_queue && methods.length > 1) {
+          prMergeMethod = selectedPRMergeMethod(prStatus);
+          const select = document.createElement('select');
+          select.className = 'pr-panel-merge-method';
+          select.setAttribute('aria-label', 'Merge method');
+          methods.forEach(function(method) {
+            const option = document.createElement('option');
+            option.value = method;
+            option.textContent = method.charAt(0).toUpperCase() + method.slice(1);
+            option.selected = method === prMergeMethod;
+            select.appendChild(option);
+          });
+          select.disabled = prMergePending;
+          select.addEventListener('change', function() { prMergeMethod = select.value; });
+          mergeActions.appendChild(select);
+        }
+        const mergeBtn = document.createElement('button');
+        mergeBtn.type = 'button';
+        mergeBtn.className = 'pr-panel-merge-btn';
+        mergeBtn.textContent = prStatus.queued
+          ? 'In merge queue'
+          : (prMergePending
+              ? (prStatus.base_requires_merge_queue ? 'Adding...' : 'Merging...')
+              : (prStatus.base_requires_merge_queue ? 'Add to merge queue' : 'Merge'));
+        mergeBtn.disabled = prStatus.queued || prStatus.ready !== true || prMergePending || prStatusLoading ||
+          !!prStatusError || !prStatus.head_sha ||
+          (!prStatus.base_requires_merge_queue && methods.length === 0);
+        mergeBtn.addEventListener('click', mergePullRequest);
+        mergeActions.appendChild(mergeBtn);
+        section.appendChild(mergeActions);
+      }
+    }
+
+    body.appendChild(section);
   }
 
   function renderPRPanel() {
@@ -7564,6 +7928,8 @@
     }
 
     body.appendChild(metaSection);
+
+    renderPRStatus(body);
 
     // Branch info
     if (pr.pr_head_ref && pr.pr_base_ref) {
@@ -7635,12 +8001,6 @@
     const extra = [];
     if (!agentEnabled) {
       extra.push('Set <kbd>agent_cmd</kbd> in your config to send comments directly to your AI agent for immediate feedback.');
-    }
-    if (shareURL && !authUserName) {
-      extra.push('Run <kbd>crit auth login</kbd> to link shared reviews with your account.');
-    }
-    if (shareURL) {
-      extra.push('Create a team on <kbd>' + shareURL.replace(/^https?:\/\//, '') + '</kbd> to group and secure your shared reviews.');
     }
     window.crit.shared.startTipRotation(extra);
   }
@@ -7870,6 +8230,10 @@
         files = await loadAllFileData(session.files || [], currentFileDataScope());
         hiddenUnresolved = session.hidden_unresolved || 0;
 
+        // Apply defaults before restoring unchanged files so manual expansion
+        // survives a review round while new or changed test files stay folded.
+        applyTestFileCollapseDefault();
+
         // Restore per-file user state from previous round
         for (let fi = 0; fi < files.length; fi++) {
           const prev = prevState[files[fi].path];
@@ -8008,6 +8372,9 @@
       reloadForScope();
       fetchCommits();
       },
+      'pr-info-changed': function() {
+      refreshPRInfo();
+      },
       'focus-changed': function(data) {
       try {
         // Server SSE wraps every event in {type, filename, content} where
@@ -8030,6 +8397,7 @@
             restoreWorkingTreeDiffScope();
           }
           applyFocusToHeader(focus);
+          applyPRInfo(prData || {});
           // Re-fetch the stack on any range focus transition — the new
           // focus may live in a different stack, and the breadcrumb's
           // visibility uses stack.length (not is_stacked) so we need the
@@ -8088,6 +8456,7 @@
     conn.source.addEventListener('file-changed', function() { sseErrorCount = 0; });
     conn.source.addEventListener('comments-changed', function() { sseErrorCount = 0; });
     conn.source.addEventListener('base-changed', function() { sseErrorCount = 0; });
+    conn.source.addEventListener('pr-info-changed', function() { sseErrorCount = 0; });
   }
 
   function showDisconnected() {
@@ -8381,11 +8750,6 @@
     });
   }
 
-  // ===== Update Button =====
-  document.getElementById('updateBtn').addEventListener('click', function() {
-    openSettingsPanel('settings');
-  });
-
   // ===== Diff Mode Toggle (Split / Unified) =====
   document.querySelectorAll('#diffModeToggle .toggle-btn').forEach(function(btn) {
     btn.addEventListener('click', function() {
@@ -8411,6 +8775,7 @@
   const commitDropdownEl = document.getElementById('commitDropdown');
   const baseBranchPickerEl = document.getElementById('baseBranchPicker');
   const baseBranchBtnEl = document.getElementById('baseBranchBtn');
+  const compareRefreshBtnEl = document.getElementById('compareRefreshBtn');
   const compareTargetTabsEl = document.getElementById('compareTargetTabs');
   const compareTargetUseCustomEl = document.getElementById('compareTargetUseCustom');
   const commitClearThroughEl = document.getElementById('commitClearThrough');
@@ -8481,7 +8846,30 @@
 
   function compareTargetChipLabel(ref) {
     if (!ref) return 'base';
-    return looksLikeShaRef(ref) ? ref.slice(0, 7) : ref;
+    const label = ref.replace(/^origin\//, '');
+    return looksLikeShaRef(label) ? label.slice(0, 7) : label;
+  }
+
+  function compareTargetRemoteBranch(ref) {
+    if (!ref || compareTargets.vcs !== 'git') return '';
+    const branch = ref.replace(/^origin\//, '');
+    if (looksLikeShaRef(branch)) return '';
+    if (ref.indexOf('origin/') === 0 || compareTargets.local.indexOf(branch) !== -1 ||
+      compareTargets.remote.indexOf(branch) !== -1) {
+      return branch;
+    }
+    return '';
+  }
+
+  function updateCompareRefreshButton() {
+    if (!compareRefreshBtnEl) return;
+    const branch = compareTargetChromeVisible() ? compareTargetRemoteBranch(currentCompareTarget) : '';
+    compareRefreshBtnEl.style.display = branch ? '' : 'none';
+    if (branch) {
+      const label = 'Fetch latest origin/' + branch;
+      compareRefreshBtnEl.title = label;
+      compareRefreshBtnEl.setAttribute('aria-label', label);
+    }
   }
 
   function isRevishQuery(q) {
@@ -8560,6 +8948,7 @@
       baseBranchPickerEl.style.display = 'none';
       if (baseBranchArrowEl) baseBranchArrowEl.style.display = 'none';
     }
+    updateCompareRefreshButton();
     if (commitRangeChromeVisible()) {
       fetchCommits();
     } else if (commitDropdownEl) {
@@ -8767,6 +9156,7 @@
       if (gen !== compareTargetsFetchGen || !compareTargetChromeVisible()) return;
       const hasTargets = compareTargets.local.length + compareTargets.remote.length > 0;
       baseBranchPickerEl.style.display = '';
+      updateCompareRefreshButton();
       if (baseBranchArrowEl && !sessionInRangeFocus()) baseBranchArrowEl.style.display = '';
       if (!hasTargets && compareTargetTabsEl) {
         compareTargetTab = 'refs';
@@ -8777,6 +9167,7 @@
       baseBranchPickerEl.classList.remove('open');
       baseBranchPickerEl.style.display = 'none';
       if (baseBranchArrowEl) baseBranchArrowEl.style.display = 'none';
+      updateCompareRefreshButton();
     }
   }
 
@@ -8844,9 +9235,10 @@
       if (refs.length === 0) return;
       parts.push('<div class="compare-target-group-label">' + escapeHtml(compareTargetGroupLabel(kind)) + '</div>');
       refs.forEach(function(ref) {
-        const active = ref === currentCompareTarget ? ' active' : '';
+        const targetRef = kind === 'remote' && compareTargets.vcs === 'git' ? 'origin/' + ref : ref;
+        const active = targetRef === currentCompareTarget ? ' active' : '';
         const detected = ref === compareTargets.detected ? '<span class="compare-target-detected">detected</span>' : '';
-        parts.push('<div class="base-branch-item' + active + '" data-branch="' + escapeHtml(ref) + '">'
+        parts.push('<div class="base-branch-item' + active + '" data-branch="' + escapeHtml(targetRef) + '">'
           + escapeHtml(ref) + detected + '</div>');
       });
     });
@@ -8893,6 +9285,7 @@
     const previousLabel = document.getElementById('baseBranchLabel').textContent;
     currentCompareTarget = ref;
     document.getElementById('baseBranchLabel').textContent = compareTargetChipLabel(ref);
+    updateCompareRefreshButton();
     try {
       const res = await fetch('/api/base-branch', {
         method: 'POST',
@@ -8904,6 +9297,7 @@
         console.error('Failed to change compare target:', errText);
         currentCompareTarget = previous;
         document.getElementById('baseBranchLabel').textContent = previousLabel;
+        updateCompareRefreshButton();
         return;
       }
       clearCommitPins();
@@ -8913,6 +9307,7 @@
       console.error('Error changing compare target:', err);
       currentCompareTarget = previous;
       document.getElementById('baseBranchLabel').textContent = previousLabel;
+      updateCompareRefreshButton();
     }
   }
 
@@ -8956,6 +9351,42 @@
       search.focus();
     }
   });
+
+  if (compareRefreshBtnEl) {
+    compareRefreshBtnEl.addEventListener('click', async function() {
+      const branch = compareTargetRemoteBranch(currentCompareTarget);
+      if (!branch || compareRefreshBtnEl.disabled) return;
+      compareRefreshBtnEl.disabled = true;
+      compareRefreshBtnEl.classList.add('is-loading');
+      try {
+        const res = await fetch('/api/base-branch/fetch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ref: currentCompareTarget }),
+        });
+        if (!res.ok) {
+          const message = (await res.text()).trim();
+          showMiniToast(message || 'Failed to fetch comparison branch');
+          return;
+        }
+        const result = await res.json();
+        currentCompareTarget = result.ref || 'origin/' + branch;
+        document.getElementById('baseBranchLabel').textContent = compareTargetChipLabel(currentCompareTarget);
+        clearCommitPins();
+        await reloadForScope();
+        fetchCompareTargets();
+        fetchCommits();
+        showMiniToast('Comparing against latest origin/' + branch);
+      } catch (err) {
+        console.error('Error fetching compare target:', err);
+        showMiniToast('Failed to fetch comparison branch');
+      } finally {
+        compareRefreshBtnEl.disabled = false;
+        compareRefreshBtnEl.classList.remove('is-loading');
+        updateCompareRefreshButton();
+      }
+    });
+  }
 
   document.getElementById('baseBranchSearch').addEventListener('input', function(e) {
     if (isRevishQuery(e.target.value) && compareTargetTab !== 'commits') {
@@ -9089,6 +9520,7 @@
           currentCompareTarget = session.base_branch_name;
           document.getElementById('baseBranchLabel').textContent = compareTargetChipLabel(currentCompareTarget);
         }
+        updateCompareRefreshButton();
 
         if (!session.files || session.files.length === 0) {
           document.getElementById('filesContainer').innerHTML =
@@ -9106,6 +9538,7 @@
         hiddenUnresolved = session.hidden_unresolved || 0;
         files.sort(fileSortComparator);
         restoreViewedState();
+        applyTestFileCollapseDefault();
         renderFileTree();
         renderAllFiles();
         buildToc();
@@ -9438,7 +9871,6 @@
       getHideResolved: isHideResolved,
       setHideResolved: setHideResolved,
       onHideResolvedChange: function () { refreshHideResolvedView(); },
-      hasActivePendingUpdates: hasActivePendingUpdates,
       announceCopy: announceCopy,
       escape: escapeHtml,
     };
@@ -9449,11 +9881,21 @@
       hooks.getIgnoreWhitespace = function () { return ignoreWhitespace; };
       hooks.setIgnoreWhitespace = function (v) { ignoreWhitespace = !!v; setSetting('ignoreWhitespace', ignoreWhitespace); };
       hooks.onIgnoreWhitespaceChange = function () { reloadForScope(); };
+      hooks.getCollapseTestFiles = function () { return collapseTestFiles; };
+      hooks.setCollapseTestFiles = function (v) {
+        collapseTestFiles = !!v;
+        setSetting('collapseTestFiles', collapseTestFiles);
+        updateTestFileCollapse(collapseTestFiles);
+      };
+      hooks.onCollapseTestFilesChange = function () {
+        renderFileTree();
+        renderAllFilesKeepingPlace();
+      };
     }
     shared.renderSettingsTab(pane, {
       mode: 'code-review',
       cfg: cfg,
-      show: isGit ? { ignoreWhitespace: true } : undefined,
+      show: isGit ? { ignoreWhitespace: true, collapseTestFiles: true } : undefined,
       hooks: hooks,
     });
   }
@@ -9620,6 +10062,16 @@
         e.preventDefault();
         if (storyActive() && tryOpenFormFromSelection()) return;
         toggleCommentsPanel();
+        break;
+      }
+      case 'mark_viewed': {
+        const target = getKeyboardFocusTarget();
+        const currentPath = topVisibleFilePath() || target && target.filePath || '';
+        const filePath = nextUnviewedFilePath(currentPath);
+        if (!filePath || !getFileByPath(filePath)) return;
+        e.preventDefault();
+        setViewed(filePath, true);
+        if (storyActive()) renderStoryRail();
         break;
       }
       case 'toggle_resolved': {
@@ -11481,6 +11933,7 @@
     })
     .then(connectSSE)
     .then(function() {
+      refreshPRInfo();
       // Register as InlineContentRenderer
       if (window.crit && window.crit.renderer) {
         // eslint-disable-next-line no-unused-vars

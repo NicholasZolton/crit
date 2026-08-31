@@ -47,6 +47,9 @@
   --crit-editor-bg-gutter:   #131420;
   --crit-editor-code-bg:     #1e2030;
   --crit-editor-comment-bg:  #1a1f36;
+  --crit-file-header-bg:       #29243b;
+  --crit-file-header-hover-bg: #342d4a;
+  --crit-file-header-border:   #5b4f78;
 
   /* ---- Editor foreground ---- */
   --crit-editor-fg:           #c0caf5;
@@ -292,6 +295,9 @@
     --crit-editor-bg-gutter:   #f6f8fa;
     --crit-editor-code-bg:     #eff1f3;
     --crit-editor-comment-bg:  #ddf4ff;
+    --crit-file-header-bg:       #f0edff;
+    --crit-file-header-hover-bg: #e7e2fb;
+    --crit-file-header-border:   #b8add8;
 
     /* ---- Editor foreground (light) ---- */
     --crit-editor-fg:           #1f2328;
@@ -505,6 +511,9 @@
   --crit-editor-bg-gutter:   #131420;
   --crit-editor-code-bg:     #1e2030;
   --crit-editor-comment-bg:  #1a1f36;
+  --crit-file-header-bg:       #29243b;
+  --crit-file-header-hover-bg: #342d4a;
+  --crit-file-header-border:   #5b4f78;
 
   /* ---- Editor foreground ---- */
   --crit-editor-fg:           #c0caf5;
@@ -717,6 +726,9 @@
   --crit-editor-bg-gutter:   #f6f8fa;
   --crit-editor-code-bg:     #eff1f3;
   --crit-editor-comment-bg:  #ddf4ff;
+  --crit-file-header-bg:       #f0edff;
+  --crit-file-header-hover-bg: #e7e2fb;
+  --crit-file-header-border:   #b8add8;
 
   /* ---- Editor foreground (light) ---- */
   --crit-editor-fg:           #1f2328;

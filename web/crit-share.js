@@ -19,7 +19,7 @@
 //
 // options (all flat top-level keys, not nested):
 //   config fields: shareURL, hostedURL, deleteToken, hostedToken,
-//             needsShareConsent, authUserName, proxyAuth, reviewType,
+//             needsShareConsent, proxyAuth, reviewType,
 //             sharedOrg, sharedVisibility
 //   shareBtnEl: the #shareBtn element (click handler attached internally)
 //   canShare:  bool — reveal() shows the button iff (shareURL && canShare).
@@ -725,30 +725,7 @@
       overlay.setAttribute('aria-modal', 'true');
       overlay.setAttribute('aria-labelledby', 'shareDialogTitle');
 
-      const isSignedIn = !!authUserName;
-      const initials = authUserName
-        ? authUserName.split(/\s+/).filter(Boolean).map(function(w) { return w[0]; }).join('').slice(0, 2).toUpperCase()
-        : '';
-
-      const nextShareBlock = isSignedIn
-        ? '<div class="share-dialog-attrib">' +
-            '<span class="share-dialog-avatar" aria-hidden="true">' + escapeHtml(initials) + '</span>' +
-            '<span>Shared as <strong>' + escapeHtml(authUserName) + '</strong></span>' +
-          '</div>'
-        : '<div class="share-dialog-next">' +
-            '<span class="share-dialog-next-eyebrow">For your next share</span>' +
-            '<p class="share-dialog-next-body">Sign in once from your terminal and every review you share ' +
-              'after that will be attributed to you and listed in your dashboard.</p>' +
-            '<div class="share-dialog-cmd">' +
-              '<span class="share-dialog-cmd-prompt" aria-hidden="true">$</span>' +
-              '<span class="share-dialog-cmd-text">crit auth login</span>' +
-              '<button class="share-dialog-cmd-copy" id="modalCopyCmd" aria-label="Copy command">' +
-                ICON_CLIPBOARD +
-              '</button>' +
-            '</div>' +
-          '</div>';
-
-      let subtitleText = 'Anyone with the link can read it. The page works without an account.';
+      let subtitleText = 'Anyone with the link can read it.';
       let orgStripHtml = '';
       if (sharedOrg) {
         const orgName = escapeHtml(sharedOrg.name);
@@ -799,7 +776,6 @@
                   ICON_CLIPBOARD +
                 '</button>' +
               '</div>' +
-              nextShareBlock +
               orgStripHtml +
             '</div>' +
           '</div>' +
@@ -845,21 +821,6 @@
           btn.setAttribute('aria-label', 'Copy link');
         }, 2000);
       });
-
-      // Copy command (anonymous only)
-      const copyCmdBtn = overlay.querySelector('#modalCopyCmd');
-      if (copyCmdBtn) {
-        copyCmdBtn.addEventListener('click', function() {
-          navigator.clipboard.writeText('crit auth login').catch(function() { /* best-effort */ });
-          this.innerHTML = ICON_CHECK_SMALL;
-          this.setAttribute('aria-label', 'Copied');
-          const btn = this;
-          setTimeout(function() {
-            btn.innerHTML = ICON_CLIPBOARD;
-            btn.setAttribute('aria-label', 'Copy command');
-          }, 2000);
-        });
-      }
 
       // Done button
       overlay.querySelector('#modalCloseBtn').addEventListener('click', closeShareModal);
@@ -1135,21 +1096,6 @@
         catch (err) { showShareError(err); return; }
       }
 
-      // If user has orgs, show org share modal (handles consent inline)
-      if (authUserName) {
-        shareBtnEl.disabled = true;
-        const results = await Promise.all([fetchOrgs(), fetchSharePolicy(popupSession)]);
-        const orgs = results[0];
-        const sharePolicy = results[1];
-        shareBtnEl.disabled = false;
-        if (orgs.length > 0) {
-          if (popupSession) popupSession.close();
-          showOrgShareModal(orgs, sharePolicy);
-          return;
-        }
-      }
-
-      // No orgs — existing consent gate
       if (needsShareConsent) {
         if (popupSession) popupSession.close();
         showConsentModal();

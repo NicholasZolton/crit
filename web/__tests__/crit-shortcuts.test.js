@@ -25,6 +25,7 @@ test('defaults resolve code-review actions from normalized key events', () => {
   assert.equal(shortcuts.actionForEvent({ key: 'f', shiftKey: true }, 'code-review'), 'finish_review');
   assert.equal(shortcuts.actionForEvent({ key: '!', code: 'Digit1', shiftKey: true }, 'code-review'), 'scope_all');
   assert.equal(shortcuts.actionForEvent({ key: '!', code: 'Digit1' }, 'code-review'), 'scope_all');
+  assert.equal(shortcuts.actionForEvent({ key: 'v', code: 'KeyV' }, 'code-review'), 'mark_viewed');
   assert.equal(shortcuts.actionForEvent({ key: 'p', code: 'KeyP' }, 'code-review'), '');
 });
 

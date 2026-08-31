@@ -291,7 +291,7 @@ test('renderSettingsTab: share card enabled shows hostname', () => {
   assert.match(pane.innerHTML, /example\.com/);
 });
 
-test('renderSettingsTab: account card present when share_url + auth_logged_in', () => {
+test('renderSettingsTab: account state is not rendered', () => {
   const sp = loadShared();
   const pane = makePane();
   sp.renderSettingsTab(pane, {
@@ -299,7 +299,7 @@ test('renderSettingsTab: account card present when share_url + auth_logged_in', 
     cfg: { share_url: 'https://example.com', auth_logged_in: true, auth_user_email: 'a@b.com', no_integration_check: true },
     hooks: { applyTheme: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
   });
-  assert.match(pane.innerHTML, /a@b\.com/);
+  assert.doesNotMatch(pane.innerHTML, /Account|a@b\.com|crit auth login/);
 });
 
 test('renderSettingsTab: opts.show overrides defaults', () => {
@@ -308,7 +308,7 @@ test('renderSettingsTab: opts.show overrides defaults', () => {
   sp.renderSettingsTab(pane, {
     mode: 'code-review',
     cfg: {},
-    show: { width: false, hideResolved: false, update: false, account: false, agent: false, integration: false, share: false },
+    show: { width: false, hideResolved: false, update: false, agent: false, integration: false, share: false },
     hooks: { applyTheme: () => {}, applyWidth: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
   });
   // Only theme pill remains.
@@ -386,6 +386,35 @@ test('renderSettingsTab: pre-checks ignore-whitespace when getIgnoreWhitespace r
   assert.match(pane.innerHTML, /id="ignoreWhitespaceToggle"[^>]*checked/);
 });
 
+test('renderSettingsTab: collapse-test-files toggle is opt-in and reflects state', () => {
+  const sp = loadShared();
+  const pane = makePane();
+  sp.renderSettingsTab(pane, {
+    mode: 'code-review',
+    cfg: {},
+    show: { collapseTestFiles: true },
+    hooks: {
+      applyTheme: () => {},
+      getCollapseTestFiles: () => true,
+      setCollapseTestFiles: () => {},
+    },
+  });
+  assert.match(pane.innerHTML, /Collapse test files/);
+  assert.match(pane.innerHTML, /id="collapseTestFilesToggle"[^>]*checked/);
+  assert.match(pane.innerHTML, /aria-label="Mark test files viewed and collapse them by default"/);
+});
+
+test('renderSettingsTab: collapse-test-files toggle is omitted by default', () => {
+  const sp = loadShared();
+  const pane = makePane();
+  sp.renderSettingsTab(pane, {
+    mode: 'code-review',
+    cfg: {},
+    hooks: { applyTheme: () => {}, getCollapseTestFiles: () => true },
+  });
+  assert.doesNotMatch(pane.innerHTML, /id="collapseTestFilesToggle"/);
+});
+
 test('renderShortcutsPane / renderAboutPane still exposed', () => {
   const sp = loadShared();
   assert.equal(typeof sp.renderShortcutsPane, 'function');
@@ -408,6 +437,8 @@ test('renderShortcutsPane: code-review mode shows code-review-only shortcuts', (
   assert.match(html, /<kbd>G<\/kbd>/);
   assert.match(html, /<kbd>t<\/kbd>/);
   assert.match(html, /<kbd>h<\/kbd>/);
+  assert.match(html, /<kbd>v<\/kbd>/);
+  assert.match(html, /Mark current diff viewed/);
   assert.match(html, /Shift<\/kbd>\+<kbd>F/);
   assert.match(html, /Shift<\/kbd>\+<kbd>C/);
   assert.match(html, /Switch to all changes/);

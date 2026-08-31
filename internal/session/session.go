@@ -2304,6 +2304,31 @@ func (s *Session) ClearAllComments() {
 	}
 }
 
+// RefreshRemoteBase fetches the selected branch from origin and compares against
+// the refreshed remote-tracking ref.
+func (s *Session) RefreshRemoteBase(ref string) (string, error) {
+	s.mu.RLock()
+	mode := s.Mode
+	v := s.VCS
+	repoRoot := s.RepoRoot
+	s.mu.RUnlock()
+	if mode != "git" {
+		return "", fmt.Errorf("remote base can only be refreshed in git mode")
+	}
+	if v == nil || v.Name() != "git" {
+		return "", fmt.Errorf("remote refresh is only supported for git")
+	}
+
+	remoteRef, err := vcs.FetchRemoteBranch(repoRoot, ref)
+	if err != nil {
+		return "", err
+	}
+	if err := s.ChangeBaseBranch(remoteRef); err != nil {
+		return "", err
+	}
+	return remoteRef, nil
+}
+
 // ChangeBaseBranch changes the diff base to the given branch, recomputes merge-base,
 // rebuilds the file list with new diffs, and notifies connected browsers via SSE.
 // Comments are preserved for files that still appear in the new diff.

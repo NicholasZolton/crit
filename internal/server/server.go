@@ -27,6 +27,7 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/comment"
 	"github.com/tomasz-tomczyk/crit/internal/config"
 	"github.com/tomasz-tomczyk/crit/internal/diff"
+	"github.com/tomasz-tomczyk/crit/internal/forge"
 	"github.com/tomasz-tomczyk/crit/internal/prompt"
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
@@ -65,6 +66,9 @@ type Server struct {
 	authToken           string
 	prInfo              *PRInfo
 	prInfoMu            sync.RWMutex
+	changeProvider      forge.Provider
+	changeRepo          forge.RepoContext
+	changeID            forge.ChangeID
 	author              string
 	agentCmd            string
 	currentVersion      string
@@ -121,7 +125,18 @@ type Server struct {
 
 // NewServer creates a Server with the given session and configuration.
 func NewServer(session *Session, frontendFS embed.FS, shareURL string, proxyAuth bool, authToken string, author string, currentVersion string, port int, agentCmd string) (*Server, error) {
-	s := &Server{assets: frontendFS, shareURL: shareURL, proxyAuth: proxyAuth, authToken: authToken, author: author, agentCmd: agentCmd, currentVersion: currentVersion, port: port, prList: &PRListCache{}, codeFontDiscovery: discoverCodeFontFamilies}
+	s := &Server{
+		assets:            frontendFS,
+		shareURL:          shareURL,
+		proxyAuth:         proxyAuth,
+		authToken:         authToken,
+		author:            author,
+		agentCmd:          agentCmd,
+		currentVersion:    currentVersion,
+		port:              port,
+		prList:            &PRListCache{},
+		codeFontDiscovery: discoverCodeFontFamilies,
+	}
 	if session != nil {
 		s.session.Store(session)
 	}
@@ -187,11 +202,15 @@ func NewServer(session *Session, frontendFS embed.FS, shareURL string, proxyAuth
 	mux.HandleFunc("/api/agent/request", s.withReady(s.handleAgentRequest))
 	mux.HandleFunc("/api/branches", s.withReady(s.handleBranches))
 	mux.HandleFunc("/api/base-branch", s.withReady(s.handleBaseBranch))
+	mux.HandleFunc("/api/base-branch/fetch", s.withReady(s.handleBaseBranchFetch))
 	mux.HandleFunc("/api/commits", s.withReady(s.handleCommits))
 	mux.HandleFunc("/api/comments", s.withReady(s.handleReviewComments))
 	mux.HandleFunc("/api/review-comment/", s.withReady(s.handleReviewCommentByID))
 	mux.HandleFunc("/api/files/list", s.withReady(s.handleFilesList))
 	mux.HandleFunc("/api/story", s.withReady(s.handleStory))
+	mux.HandleFunc("/api/change/status", s.withReady(s.handleChangeStatus))
+	mux.HandleFunc("/api/change/comments/sync", s.withReady(s.handleChangeCommentsSync))
+	mux.HandleFunc("/api/change/merge", s.withReady(s.handleChangeMerge))
 
 	// File-scoped endpoints (use ?path= query param)
 	mux.HandleFunc("/api/file", s.withReady(s.handleFile))
@@ -417,6 +436,18 @@ func (s *Server) SetSession(session *Session) {
 func (s *Server) SetPRInfo(prInfo *PRInfo) {
 	s.prInfoMu.Lock()
 	s.prInfo = prInfo
+	s.prInfoMu.Unlock()
+	if sess := s.session.Load(); sess != nil {
+		sess.Notify(SSEEvent{Type: "pr-info-changed"})
+	}
+}
+
+// SetChangeContext configures the active provider-neutral change request.
+func (s *Server) SetChangeContext(provider forge.Provider, repo forge.RepoContext, id forge.ChangeID) {
+	s.prInfoMu.Lock()
+	s.changeProvider = provider
+	s.changeRepo = repo
+	s.changeID = id
 	s.prInfoMu.Unlock()
 }
 
@@ -2047,6 +2078,32 @@ func (s *Server) handleBaseBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+// handleBaseBranchFetch refreshes origin's branch and switches the diff to it.
+func (s *Server) handleBaseBranchFetch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Bad request: invalid JSON", http.StatusBadRequest)
+		return
+	}
+	ref := strings.TrimSpace(body.Ref)
+	if ref == "" {
+		http.Error(w, "Bad request: ref is required", http.StatusBadRequest)
+		return
+	}
+	remoteRef, err := s.session.Load().RefreshRemoteBase(ref)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]string{"ref": remoteRef})
 }
 
 // replyOps abstracts the difference between file-scoped and review-scoped reply operations.

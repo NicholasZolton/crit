@@ -197,6 +197,8 @@ Crit can review and sync comments bidirectionally with GitHub pull requests and 
 
 Crit auto-detects GitHub or GitLab from the repository remote. Set `"forge": "github"` or `"forge": "gitlab"` in config to override ambiguous/self-managed remotes, or pass `--forge` to `crit pull` and `crit push`. GitLab's base URL is configured once with `gitlab_url` and defaults to `https://gitlab.com`; set it to your self-managed instance in `.crit.config.json`. MR URLs remain valid change identifiers, but their host must match the configured `gitlab_url`.
 
+For GitHub-backed browser sessions, Crit imports inline review threads in the background and the pull-request panel can refresh checks and reviews, sync comments on demand, and merge or enter the repository's merge queue. These browser actions use the same provider-neutral forge boundary as the CLI; GitHub is the first provider to implement the status and merge capabilities.
+
 #### Open a remote change for review
 
 ```bash

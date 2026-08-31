@@ -11,9 +11,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/tomasz-tomczyk/crit/internal/forge"
 	"github.com/tomasz-tomczyk/crit/internal/reviewpath"
 	"github.com/tomasz-tomczyk/crit/internal/server"
 )
@@ -299,8 +301,31 @@ func runServe(args []string) {
 
 	if sess.Mode == "git" {
 		go func() {
-			if prInfo := detectPRInfo(); prInfo != nil {
-				srv.SetPRInfo(prInfo)
+			provider, err := selectProvider(forge.Auto)
+			if err != nil {
+				return
+			}
+			repo := forge.RepoContext{Root: cwd}
+			changeID, err := provider.Detect(ctx, repo)
+			if err != nil {
+				return
+			}
+			change, err := provider.Get(ctx, repo, changeID)
+			if err != nil {
+				log.Printf("Warning: could not load active change request: %v", err)
+				return
+			}
+			if !strings.EqualFold(change.State, "open") {
+				return
+			}
+			srv.SetChangeContext(provider, repo, changeID)
+			if provider.Kind() == forge.GitHub {
+				srv.SetPRInfo(prInfoFromChange(change))
+			}
+			syncCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			defer cancel()
+			if _, err := srv.SyncChangeComments(syncCtx); err != nil {
+				log.Printf("Warning: could not sync change-request comments: %v", err)
 			}
 		}()
 	}
@@ -347,5 +372,27 @@ func runServe(args []string) {
 
 	if sess.ReviewFilePath != "" {
 		fmt.Fprintf(os.Stderr, "Review file: %s\n", reviewPathsFor(sess.ReviewFilePath).Review)
+	}
+}
+
+func prInfoFromChange(change forge.ChangeRequest) *PRInfo {
+	return &PRInfo{
+		URL:               change.URL,
+		Number:            change.ID.Number,
+		Title:             change.Title,
+		IsDraft:           change.Draft,
+		State:             change.State,
+		Body:              change.Body,
+		BaseRefName:       change.BaseRefName,
+		HeadRefName:       change.HeadRefName,
+		BaseRefOid:        change.BaseSHA,
+		HeadRefOid:        change.HeadSHA,
+		HeadRepoURL:       change.HeadRepo.CloneURL,
+		IsCrossRepository: change.CrossRepository,
+		Additions:         change.Additions,
+		Deletions:         change.Deletions,
+		ChangedFiles:      change.ChangedFiles,
+		AuthorLogin:       change.Author,
+		CreatedAt:         change.CreatedAt,
 	}
 }

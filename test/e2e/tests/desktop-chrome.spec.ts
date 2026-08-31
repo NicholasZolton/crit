@@ -48,6 +48,18 @@ test.describe('Desktop chrome invariants', () => {
     await expect(viewed).toBeVisible();
   });
 
+  test('sticky file headers are visually distinct from hunk separators', async ({ page }) => {
+    const fileHeader = page.locator('.file-header').first();
+    const hunkHeader = page.locator('.diff-spacer').first();
+    await expect(fileHeader).toBeVisible();
+    await expect(hunkHeader).toBeVisible();
+
+    const fileBackground = await fileHeader.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const hunkBackground = await hunkHeader.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(fileBackground).not.toBe(hunkBackground);
+    await expect(fileHeader).toHaveCSS('border-top-width', '1px');
+  });
+
   test('filename is wrapped in a .filename span for independent truncation', async ({ page }) => {
     // F6 splits the file path into <span class='dir'> and <span class='filename'>
     // so they can shrink independently with ellipsis. The rule is universal

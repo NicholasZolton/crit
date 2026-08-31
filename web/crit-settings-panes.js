@@ -13,8 +13,8 @@
 //   renderSettingsTab(pane, opts)
 //     opts.mode    : 'code-review' | 'live'
 //     opts.cfg     : /api/config response or {}
-//     opts.show    : { width, hideResolved, ignoreWhitespace, update, account,
-//                       agent, integration, share } — booleans, defaulted from
+//     opts.show    : { width, hideResolved, ignoreWhitespace, collapseTestFiles,
+//                       update, agent, integration, share } — booleans, defaulted from
 //                       mode. ignoreWhitespace defaults off; the caller enables
 //                       it only when code diffs exist (git mode).
 //     opts.hooks   : {
@@ -25,7 +25,9 @@
 //                      getIgnoreWhitespace(),                // required if show.ignoreWhitespace
 //                      setIgnoreWhitespace(v),               // required if show.ignoreWhitespace
 //                      onIgnoreWhitespaceChange(),           // optional, called after toggle (reloads diffs)
-//                      hasActivePendingUpdates(),            // optional, default false
+//                      getCollapseTestFiles(),                // required if show.collapseTestFiles
+//                      setCollapseTestFiles(v),               // required if show.collapseTestFiles
+//                      onCollapseTestFilesChange(),           // optional, called after toggle
 //                      announceCopy(),                       // optional
 //                    }
 
@@ -220,8 +222,8 @@
         width: false,         // width pill is file-mode only
         hideResolved: true,
         ignoreWhitespace: false, // code-diff only; enabled per-call in git mode
+        collapseTestFiles: false,
         update: true,
-        account: true,
         agent: true,
         integration: true,
         share: true,
@@ -232,8 +234,8 @@
       width: true,
       hideResolved: true,
       ignoreWhitespace: false, // code-diff only; enabled per-call in git mode
+      collapseTestFiles: false,
       update: true,
-      account: true,
       agent: true,
       integration: true,
       share: true,
@@ -390,10 +392,21 @@
       html += '</div>';
     }
 
+    if (show.collapseTestFiles && hooks.getCollapseTestFiles) {
+      var collapseTestFiles = !!hooks.getCollapseTestFiles();
+      html += '<div class="settings-display-row">';
+      html += '<span class="settings-display-label">Collapse test files</span>';
+      html += '<label class="comments-panel-switch">';
+      html += '<input type="checkbox" id="collapseTestFilesToggle" aria-label="Mark test files viewed and collapse them by default"' + (collapseTestFiles ? ' checked' : '') + '>';
+      html += '<span class="comments-panel-switch-track"><span class="comments-panel-switch-thumb"></span></span>';
+      html += '</label>';
+      html += '</div>';
+    }
+
     html += '</div>'; // close settings-display-group
 
     // ---------- Configuration ----------
-    var anyConfigCard = show.update || show.account || show.agent || show.integration || show.share;
+    var anyConfigCard = show.update || show.agent || show.integration || show.share;
     if (anyConfigCard) {
       html += '<div class="settings-section-label">Configuration</div>';
       html += '<div class="config-cards">';
@@ -418,26 +431,6 @@
           html += '<button type="button" class="config-card-dismiss" id="updateDismissBtn" data-dismiss-version="' + esc(cfg.latest_version) + '">Don\'t remind me until next version</button>';
         }
         html += '</div></div></div>';
-      }
-
-      // Account card
-      if (show.account && cfg.share_url) {
-        if (cfg.auth_logged_in) {
-          var display = cfg.auth_user_email || cfg.auth_user_name || 'Logged in';
-          html += '<div class="config-card config-card--green"><div class="config-card-header">';
-          html += '<span class="config-card-icon" style="color:var(--crit-green)">&#10003;</span>';
-          html += '<span class="config-card-title">Account</span>';
-          html += '<span class="config-card-value">' + esc(display) + '</span>';
-          html += '</div></div>';
-        } else {
-          html += '<div class="config-card config-card--red config-card--unconfigured"><div class="config-card-header">';
-          html += '<span class="config-card-icon" style="color:var(--crit-red)">&#9675;</span>';
-          html += '<span class="config-card-title">Account</span>';
-          html += '</div>';
-          html += '<div class="config-card-body">Not logged in. Sign in to link reviews to your account and track review history.</div>';
-          html += '<div class="config-card-cmd"><span>$ crit auth login</span><button class="config-card-copy" data-copy="crit auth login">Copy</button></div>';
-          html += '</div>';
-        }
       }
 
       // Agent Command card
@@ -660,14 +653,21 @@
       }
     }
 
+    if (show.collapseTestFiles && hooks.getCollapseTestFiles) {
+      var ctfToggle = pane.querySelector('#collapseTestFilesToggle');
+      if (ctfToggle) {
+        ctfToggle.addEventListener('change', function () {
+          if (hooks.setCollapseTestFiles) hooks.setCollapseTestFiles(ctfToggle.checked);
+          if (hooks.onCollapseTestFilesChange) hooks.onCollapseTestFilesChange();
+        });
+      }
+    }
+
     var dismissBtn = pane.querySelector('#updateDismissBtn');
     if (dismissBtn) {
       dismissBtn.addEventListener('click', function () {
         var version = dismissBtn.dataset.dismissVersion || '';
         setSetting('updatesDismissed', version);
-        var updateBtn = document.getElementById('updateBtn');
-        var pending = hooks.hasActivePendingUpdates ? !!hooks.hasActivePendingUpdates() : false;
-        if (updateBtn && !pending) updateBtn.style.display = 'none';
         var body = pane.querySelector('#updateCardBody');
         if (body) {
           dismissBtn.outerHTML = '<span class="config-card-dismissed" id="updateDismissedNote">Dismissed — will remind you on next version</span>';
@@ -684,9 +684,6 @@
         var map = getSetting('dismissedIntegrations', {}) || {};
         map[agent] = hash;
         setSetting('dismissedIntegrations', map);
-        var updateBtn = document.getElementById('updateBtn');
-        var pending = hooks.hasActivePendingUpdates ? !!hooks.hasActivePendingUpdates() : false;
-        if (updateBtn && !pending) updateBtn.style.display = 'none';
         integrationDismissBtn.outerHTML = '<span class="config-card-dismissed" id="integrationDismissedNote">Dismissed — will remind you when this integration changes</span>';
       });
     }
@@ -698,9 +695,6 @@
         var map = getSetting('dismissedIntegrations', {}) || {};
         map['missing:' + agent] = true;
         setSetting('dismissedIntegrations', map);
-        var updateBtn = document.getElementById('updateBtn');
-        var pending = hooks.hasActivePendingUpdates ? !!hooks.hasActivePendingUpdates() : false;
-        if (updateBtn && !pending) updateBtn.style.display = 'none';
         var card = btn.closest('.config-card');
         if (card) card.remove();
       });

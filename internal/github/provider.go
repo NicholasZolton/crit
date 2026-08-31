@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/tomasz-tomczyk/crit/internal/forge"
+	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/tomasz-tomczyk/crit/internal/share"
 )
 
 // Provider exposes the existing GitHub implementation through the neutral
@@ -145,7 +147,51 @@ func (Provider) FetchFile(_ context.Context, _ forge.RepoContext, source forge.R
 
 func (Provider) Invalidate(id forge.ChangeID) { InvalidatePRCache(id.Number) }
 
+func (Provider) Status(ctx context.Context, repo forge.RepoContext, id forge.ChangeID) (forge.ChangeStatus, error) {
+	return FetchPRStatus(ctx, repo.Root, id.Number)
+}
+
+func (Provider) SyncComments(ctx context.Context, request forge.CommentSyncRequest) (forge.CommentSyncResult, error) {
+	comments, err := FetchPRCommentsContext(ctx, request.Repo.Root, request.Change.Number)
+	if err != nil {
+		return forge.CommentSyncResult{}, err
+	}
+	threadResolved, err := FetchPRThreadResolvedContext(ctx, request.Repo.Root, request.Change.Number)
+	if err != nil {
+		return forge.CommentSyncResult{}, err
+	}
+	cj, err := review.LoadCritJSON(request.ReviewPath)
+	if err != nil {
+		return forge.CommentSyncResult{}, err
+	}
+	if err := share.CheckGitHubSyncAllowed(cj, "PR comment sync"); err != nil {
+		return forge.CommentSyncResult{}, err
+	}
+	if cj.Files == nil {
+		cj.Files = make(map[string]session.CritJSONFile)
+	}
+	scope := inheritedScope{
+		HeadSHA:      request.Scope.HeadSHA,
+		BaseSHA:      request.Scope.BaseSHA,
+		Forge:        string(request.Scope.Forge),
+		ChangeNumber: request.Scope.ChangeNumber,
+		DiffScope:    request.Scope.DiffScope,
+	}
+	added := MergeGHCommentsScoped(&cj, comments, scope, threadResolved)
+	if err := review.SaveCritJSON(request.ReviewPath, cj); err != nil {
+		return forge.CommentSyncResult{}, err
+	}
+	return forge.CommentSyncResult{Added: added}, nil
+}
+
+func (Provider) Merge(ctx context.Context, request forge.MergeRequest) (forge.MergeResult, error) {
+	return MergePR(ctx, request.Repo.Root, request.Change.Number, request.HeadSHA, request.Method)
+}
+
 var _ forge.Provider = Provider{}
+var _ forge.StatusProvider = Provider{}
+var _ forge.CommentSyncProvider = Provider{}
+var _ forge.MergeProvider = Provider{}
 
 func githubProject(raw string) string {
 	if u, err := url.Parse(raw); err == nil && u.Host != "" {

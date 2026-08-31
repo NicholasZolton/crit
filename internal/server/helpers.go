@@ -63,6 +63,10 @@ func mergeWebComments(critPath string, newComments []webComment, replyUpdates ma
 	return share.MergeWebComments(critPath, newComments, replyUpdates)
 }
 
+func checkForgeSyncAllowed(cj CritJSON, operation string) error {
+	return share.CheckGitHubSyncAllowed(cj, operation)
+}
+
 func crawlPreview(origin string) ([]ShareFile, error) { return session.CrawlPreview(origin) }
 
 func saveAttachment(reviewPath string, data []byte) (string, error) {

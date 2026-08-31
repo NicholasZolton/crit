@@ -1,7 +1,7 @@
-// crit-glob-match.js — gitignore-ish glob matcher for auto-viewed-patterns
-// (issue #658). Pure, dependency-free. Used by app.js (code-review mode) to
-// decide which files an `auto_viewed_patterns` config entry should auto-mark
-// as viewed. The same matching logic is inlined in crit-web's
+// crit-glob-match.js — gitignore-ish glob matcher and conventional test-file
+// detection. Pure, dependency-free. Used by app.js (code-review mode) for
+// auto-viewed patterns and default test-file collapsing. The glob matching
+// logic is also inlined in crit-web's
 // document-renderer.js for parity (crit-web has no shared crit-* modules).
 //
 // Supported pattern types (same set crit's Go `ignore_patterns` documents):
@@ -81,9 +81,25 @@
     return false;
   }
 
+  function isTestFile(filePath) {
+    if (!filePath) return false;
+    var normalized = String(filePath).replace(/\\/g, '/');
+    var parts = normalized.split('/');
+    var basename = parts.pop() || '';
+
+    if (parts.some(function (part) {
+      return /^(?:test|tests|__tests__|spec|specs)$/i.test(part);
+    })) return true;
+
+    if (/^test_.+\.[^/.]+$/i.test(basename)) return true;
+    if (/[._-](?:test|tests|spec)\.[^/.]+$/i.test(basename)) return true;
+    return /(?:Test|Tests|Spec)\.[^/.]+$/.test(basename);
+  }
+
   var api = {
     matchOne: matchOne,
     matchAny: matchAny,
+    isTestFile: isTestFile,
   };
 
   if (typeof window !== 'undefined') {

@@ -46,6 +46,20 @@ export async function loadPage(page: Page) {
   await expect(page.locator('.loading')).toBeHidden({ timeout: 10_000 });
 }
 
+export async function setPageVisibility(page: Page, visible: boolean): Promise<void> {
+  await page.evaluate((isVisible: boolean) => {
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => (isVisible ? 'visible' : 'hidden'),
+    });
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get: () => !isVisible,
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, visible);
+}
+
 // Scope selectors to the plan.md file section.
 export function mdSection(page: Page) {
   return page.locator('.file-section').filter({ hasText: 'plan.md' });

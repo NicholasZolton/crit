@@ -4,7 +4,10 @@
 // internal/gitlab.
 package forge
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Kind identifies a supported code-hosting provider.
 type Kind string
@@ -68,6 +71,110 @@ type ChangeRequest struct {
 	ChangedFiles    int
 	Author          string
 	CreatedAt       string
+}
+
+// MergeMethod is a provider-neutral direct merge strategy.
+type MergeMethod string
+
+const (
+	MergeMethodMerge  MergeMethod = "merge"
+	MergeMethodSquash MergeMethod = "squash"
+	MergeMethodRebase MergeMethod = "rebase"
+)
+
+// ChangeCheck is one CI check or commit status reported by a provider.
+type ChangeCheck struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+	URL   string `json:"url,omitempty"`
+}
+
+// ChangeReview is the latest review from one reviewer.
+type ChangeReview struct {
+	Author string `json:"author"`
+	State  string `json:"state"`
+}
+
+// ChangeStatus is the normalized merge readiness view consumed by the UI.
+// ProviderID is an opaque API node ID used only by the provider during merge.
+type ChangeStatus struct {
+	ProviderID              string         `json:"-"`
+	HeadSHA                 string         `json:"head_sha"`
+	HeadCurrent             bool           `json:"head_current"`
+	Checks                  []ChangeCheck  `json:"checks"`
+	LatestReviews           []ChangeReview `json:"latest_reviews"`
+	ReviewDecision          string         `json:"review_decision"`
+	Mergeable               string         `json:"mergeable"`
+	MergeStateStatus        string         `json:"merge_state_status"`
+	UnresolvedReviewThreads int            `json:"unresolved_review_thread_count"`
+	BaseRequiresMergeQueue  bool           `json:"base_requires_merge_queue"`
+	Queued                  bool           `json:"queued"`
+	AllowedMergeMethods     []MergeMethod  `json:"allowed_merge_methods"`
+	DefaultMergeMethod      MergeMethod    `json:"default_merge_method,omitempty"`
+	Ready                   bool           `json:"ready"`
+	BlockingReasons         []string       `json:"blocking_reasons"`
+}
+
+// CommentScope preserves the active focused layer when importing comments.
+type CommentScope struct {
+	HeadSHA      string
+	BaseSHA      string
+	Forge        Kind
+	ChangeNumber int
+	DiffScope    string
+}
+
+type CommentSyncRequest struct {
+	Repo       RepoContext
+	Change     ChangeID
+	ReviewPath string
+	Scope      CommentScope
+}
+
+type CommentSyncResult struct {
+	Added int `json:"added"`
+}
+
+type MergeRequest struct {
+	Repo    RepoContext
+	Change  ChangeID
+	HeadSHA string
+	Method  MergeMethod
+}
+
+type MergeResult struct {
+	Queued bool `json:"queued"`
+	Merged bool `json:"merged"`
+}
+
+var (
+	ErrStaleHead           = errors.New("change request head changed")
+	ErrNotReady            = errors.New("change request is not ready to merge")
+	ErrMergeMethodRequired = errors.New("merge method is required")
+	ErrMergeMethodDisabled = errors.New("merge method is not enabled")
+)
+
+// Optional capabilities keep status/sync/merge additive for providers that
+// currently implement only the core Provider interface.
+type StatusProvider interface {
+	Status(ctx context.Context, repo RepoContext, id ChangeID) (ChangeStatus, error)
+}
+
+type CommentSyncProvider interface {
+	SyncComments(ctx context.Context, request CommentSyncRequest) (CommentSyncResult, error)
+}
+
+type MergeProvider interface {
+	Merge(ctx context.Context, request MergeRequest) (MergeResult, error)
+}
+
+type authenticationError interface {
+	AuthenticationFailed() bool
+}
+
+func IsAuthenticationError(err error) bool {
+	var authErr authenticationError
+	return errors.As(err, &authErr) && authErr.AuthenticationFailed()
 }
 
 // ChangeSummary is the lightweight change-request shape used by the picker.

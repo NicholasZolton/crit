@@ -375,7 +375,6 @@
           deleteToken: cfg.delete_token || '',
           hostedToken: cfg.hosted_token || '',
           needsShareConsent: cfg.needs_consent || false,
-          authUserName: cfg.auth_user_name || '',
           proxyAuth: !!cfg.proxy_auth,
           sharedOrg: cfg.share_org
             ? { slug: cfg.share_org, name: cfg.share_org_name || cfg.share_org }

@@ -2,6 +2,7 @@ package live
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,6 +30,10 @@ var agentScriptFiles = []string{
 	"agent-reanchor-state.js",
 	"crit-agent.js",
 }
+
+const liveParentOriginKey = "__crit_parent_origin"
+
+type liveParentOriginContextKey struct{}
 
 // newLiveProxy builds a reverse proxy for a live-mode session.
 // upstreamOrigin is the target URL. Any path on it is the iframe's initial
@@ -56,10 +62,25 @@ func newLiveProxy(upstreamOrigin string, apiPort int, upstreamCookies string) (h
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableCompression:    true,
 	}
+	parentOrigins := make(map[string]string)
+	var parentOriginsMu sync.Mutex
 
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
+			parentOrigin := liveParentOrigin(pr.In)
+			requestHost := liveRequestHostname(pr.In.Host)
+			parentOriginsMu.Lock()
+			if cached := parentOrigins[requestHost]; cached != "" {
+				parentOrigin = cached
+			} else if parentOrigin != "" {
+				parentOrigins[requestHost] = parentOrigin
+			}
+			parentOriginsMu.Unlock()
 			pr.SetURL(target)
+			query := pr.Out.URL.Query()
+			query.Del(liveParentOriginKey)
+			pr.Out.URL.RawQuery = query.Encode()
+			pr.Out = pr.Out.WithContext(context.WithValue(pr.Out.Context(), liveParentOriginContextKey{}, parentOrigin))
 			// SetURL sends the upstream's own Host, so tell the app where the
 			// proxy is and let it generate URLs pointing back at us
 			pr.SetXForwarded()
@@ -163,6 +184,7 @@ const maxHTMLBodyBytes = 25 << 20
 
 func makeModifyResponse(apiPort int, upstream *url.URL) func(*http.Response) error {
 	return func(resp *http.Response) error {
+		parentOrigin, _ := resp.Request.Context().Value(liveParentOriginContextKey{}).(string)
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 			return rewriteRedirect(resp, upstream)
 		}
@@ -201,7 +223,11 @@ func makeModifyResponse(apiPort int, upstream *url.URL) func(*http.Response) err
 			resp.Body = io.NopCloser(bytes.NewReader(body))
 			return nil
 		}
-		body, agentInjected := applyHTMLInjections(body, apiPort)
+		agentOrigin := fmt.Sprintf("http://localhost:%d", apiPort)
+		if parentOrigin != "" {
+			agentOrigin = parentOrigin
+		}
+		body, agentInjected := applyHTMLInjections(body, agentOrigin)
 		if !agentInjected {
 			resp.Header.Set("X-Crit-Agent-Injection", "failed")
 		}
@@ -215,7 +241,7 @@ func makeModifyResponse(apiPort int, upstream *url.URL) func(*http.Response) err
 // agent script bundle right before the LAST </body>. Returns the modified
 // body and whether the agent bundle was actually injected (caller sets
 // X-Crit-Agent-Injection: failed when false).
-func applyHTMLInjections(body []byte, apiPort int) ([]byte, bool) {
+func applyHTMLInjections(body []byte, agentOrigin string) ([]byte, bool) {
 	// Match <head> / </body> against a comment-masked copy so literals
 	// inside <!-- ... --> don't misroute injections; indexes line up
 	// with the original because masking preserves length. Both lookups
@@ -225,7 +251,7 @@ func applyHTMLInjections(body []byte, apiPort int) ([]byte, bool) {
 	preamble := swShim + routeAnnouncerScript
 	var sb strings.Builder
 	for _, f := range agentScriptFiles {
-		fmt.Fprintf(&sb, `<script src="http://localhost:%d/%s"></script>`, apiPort, f)
+		fmt.Fprintf(&sb, `<script src="%s/%s"></script>`, html.EscapeString(agentOrigin), f)
 	}
 	tags := sb.String()
 
@@ -263,10 +289,39 @@ func applyHTMLInjections(body []byte, apiPort int) ([]byte, bool) {
 	return body, agentInjected
 }
 
+func liveParentOrigin(r *http.Request) string {
+	raw := r.URL.Query().Get(liveParentOriginKey)
+	if raw == "" {
+		return ""
+	}
+	parent, err := url.Parse(raw)
+	if err != nil || (parent.Scheme != "http" && parent.Scheme != "https") || parent.Host == "" ||
+		parent.User != nil || parent.Path != "" || parent.RawQuery != "" || parent.Fragment != "" {
+		return ""
+	}
+	requestHost := liveRequestHostname(r.Host)
+	if !strings.EqualFold(parent.Hostname(), requestHost) {
+		return ""
+	}
+	return parent.Scheme + "://" + parent.Host
+}
+
+func liveRequestHostname(hostport string) string {
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		return strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(hostport, "["), "]")
+}
+
 // routeAnnouncerScript posts the iframe's pathname to the parent on initial
 // load, after pushState/replaceState, and on popstate.
 const routeAnnouncerScript = `<script data-crit-route-announcer>
 (function(){
+  var url = new URL(location.href);
+  if (url.searchParams.has("__crit_parent_origin")) {
+    url.searchParams.delete("__crit_parent_origin");
+    history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+  }
   function post(){
     try { parent.postMessage({type:"route-change", pathname: location.pathname}, "*"); } catch(e){}
   }

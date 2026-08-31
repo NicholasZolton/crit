@@ -106,7 +106,10 @@ test.describe('live-mode shell — iframe + route detection', () => {
   test('iframe src points at proxy_port from /api/session', async ({ page }) => {
     await page.goto('/live');
     const src = await page.locator('#critLiveIframe').getAttribute('src');
-    expect(src).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/$/);
+    expect(src).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?/);
+    expect(new URL(src!).searchParams.get('__crit_parent_origin')).toBe(page.url().replace(/\/live$/, ''));
+    const iframe = page.frames().find((frame) => frame !== page.mainFrame());
+    await expect.poll(() => new URL(iframe!.url()).searchParams.has('__crit_parent_origin')).toBe(false);
   });
 
   // Removed two fixme'd specs that drove postMessage from the chrome's own

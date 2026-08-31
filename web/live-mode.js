@@ -574,7 +574,9 @@
     var port = s.proxy_port || 0;
     if (!port) return 'about:blank';
     var host = window.location.hostname || 'localhost';
-    return 'http://' + host + ':' + port + (pathname || '/');
+    var url = new URL('http://' + host + ':' + port + (pathname || '/'));
+    url.searchParams.set('__crit_parent_origin', window.location.origin);
+    return url.toString();
   }
 
   registerInstaller(function installIframe() {

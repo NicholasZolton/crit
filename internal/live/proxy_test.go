@@ -185,6 +185,116 @@ func TestProxyModifyResponse_InjectsAgentBeforeBodyTag(t *testing.T) {
 	}
 }
 
+func TestProxyModifyResponse_UsesBrowserVisibleParentOrigin(t *testing.T) {
+	var upstreamQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintln(w, "<html><body>app</body></html>")
+	}))
+	defer upstream.Close()
+	proxy, err := newLiveProxy(upstream.URL, 54321, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := httptest.NewServer(proxy)
+	defer ps.Close()
+
+	const parentOrigin = "https://crit.project.localhost:1355"
+	req, err := http.NewRequest(http.MethodGet, ps.URL+"/?page=1&"+liveParentOriginKey+"="+url.QueryEscape(parentOrigin), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "crit.project.localhost:54322"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if upstreamQuery != "page=1" {
+		t.Fatalf("upstream query = %q, want parent metadata stripped", upstreamQuery)
+	}
+	if !strings.Contains(string(body), parentOrigin+"/crit-agent.js") {
+		t.Fatalf("agent script did not use browser-visible parent origin: %s", body)
+	}
+
+	req, err = http.NewRequest(http.MethodGet, ps.URL+"/next", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "crit.project.localhost:54322"
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), parentOrigin+"/crit-agent.js") {
+		t.Fatalf("full-page navigation lost browser-visible parent origin: %s", body)
+	}
+
+	req, err = http.NewRequest(http.MethodGet, ps.URL+"/overwrite?"+liveParentOriginKey+"="+url.QueryEscape("https://crit.project.localhost:9"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "crit.project.localhost:54322"
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), parentOrigin+"/crit-agent.js") {
+		t.Fatalf("later request overwrote established parent origin: %s", body)
+	}
+}
+
+func TestLiveParentOrigin_RejectsDifferentHostname(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://crit.project.localhost:54322/?"+liveParentOriginKey+"="+url.QueryEscape("https://evil.example"), nil)
+	if got := liveParentOrigin(req); got != "" {
+		t.Fatalf("liveParentOrigin = %q, want empty", got)
+	}
+}
+
+func TestProxyRedirect_PreservesBrowserVisibleParentOrigin(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/next", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintln(w, "<html><body>redirected</body></html>")
+	}))
+	defer upstream.Close()
+	proxy, err := newLiveProxy(upstream.URL, 54321, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := httptest.NewServer(proxy)
+	defer ps.Close()
+
+	const parentOrigin = "https://crit.project.localhost:1355"
+	req, err := http.NewRequest(http.MethodGet, ps.URL+"/?"+liveParentOriginKey+"="+url.QueryEscape(parentOrigin), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "crit.project.localhost:54322"
+	client := &http.Client{CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+		req.Host = "crit.project.localhost:54322"
+		return nil
+	}}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), parentOrigin+"/crit-agent.js") {
+		t.Fatalf("redirected page lost browser-visible parent origin: %s", body)
+	}
+}
+
 func TestProxyModifyResponse_InjectsAtLastBodyTag(t *testing.T) {
 	// Simulates a page where </body> appears inside a string literal in a
 	// <script>. The agent bundle must inject before the LAST </body> (the

@@ -445,6 +445,8 @@
   let prCommentsSyncPromise = null;
   let prMergePending = false;
   let prMergeMethod = '';
+  let prMergeConfirmResolve = null;
+  let prMergeConfirmReturnFocus = null;
   const PR_STATUS_POLL_MS = 60 * 1000;
   const PR_COMMENTS_POLL_MS = 5 * 60 * 1000;
   let lastPRStatusRefreshAt = 0;
@@ -7709,12 +7711,61 @@
     return methods[0] || '';
   }
 
+  function closePRMergeConfirm(confirmed) {
+    const overlay = document.getElementById('prMergeConfirmOverlay');
+    overlay.classList.remove('active');
+    if (prMergeConfirmReturnFocus && prMergeConfirmReturnFocus.isConnected) prMergeConfirmReturnFocus.focus();
+    prMergeConfirmReturnFocus = null;
+    if (prMergeConfirmResolve) {
+      const resolve = prMergeConfirmResolve;
+      prMergeConfirmResolve = null;
+      resolve(confirmed);
+    }
+  }
+
+  function confirmPRMerge(queued, method) {
+    const overlay = document.getElementById('prMergeConfirmOverlay');
+    const action = document.getElementById('prMergeConfirmAction');
+    prMergeConfirmReturnFocus = document.activeElement;
+    document.getElementById('prMergeConfirmKicker').textContent = 'Pull request #' + prData.pr_number;
+    document.getElementById('prMergeConfirmHeading').textContent = queued ? 'Add to merge queue?' : 'Merge pull request?';
+    document.getElementById('prMergeConfirmDetail').textContent = queued
+      ? 'Crit will submit the current head commit to GitHub\'s merge queue.'
+      : 'Crit will merge the current head using ' + (method || 'the repository default') + '.';
+    action.textContent = queued ? 'Add to merge queue' : 'Merge pull request';
+    overlay.classList.add('active');
+    action.focus();
+    return new Promise(function(resolve) { prMergeConfirmResolve = resolve; });
+  }
+
+  document.getElementById('prMergeConfirmCancel').addEventListener('click', function() { closePRMergeConfirm(false); });
+  document.getElementById('prMergeConfirmAction').addEventListener('click', function() { closePRMergeConfirm(true); });
+  document.getElementById('prMergeConfirmOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closePRMergeConfirm(false);
+  });
+  document.getElementById('prMergeConfirmOverlay').addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closePRMergeConfirm(false);
+    } else if (e.key === 'Tab') {
+      const first = document.getElementById('prMergeConfirmCancel');
+      const last = document.getElementById('prMergeConfirmAction');
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  });
+
   async function mergePullRequest() {
     if (!prData || !prStatus || prStatusError || prMergePending || !prStatus.head_sha) return;
     const queued = !!prStatus.base_requires_merge_queue;
     const method = queued ? '' : selectedPRMergeMethod(prStatus);
-    const action = queued ? 'add to the merge queue' : 'merge using ' + (method || 'the repository default');
-    if (!window.confirm('PR #' + prData.pr_number + ': ' + action + '?')) return;
+    if (!await confirmPRMerge(queued, method)) return;
 
     prMergePending = true;
     renderPRPanel();

@@ -185,12 +185,15 @@ test.describe('Pull request panel', () => {
       mergeRequest = JSON.stringify(route.request().postDataJSON());
       await route.fulfill({ status: 200, json: { queued: true, merged: false, message: 'Queued' } });
     });
-    page.on('dialog', async (dialog) => dialog.accept());
     await loadPage(page);
     await openPRPanel(page);
 
     await expect(page.locator('.pr-panel-merge-method')).toHaveCount(0);
     await page.getByRole('button', { name: 'Add to merge queue' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Add to merge queue?' });
+    await expect(confirm).toBeVisible();
+    expect(mergeRequest).toBe('');
+    await confirm.getByRole('button', { name: 'Add to merge queue' }).click();
     await expect.poll(() => mergeRequest).toBe(JSON.stringify({ head_sha: 'abc123def456' }));
   });
 
@@ -205,7 +208,6 @@ test.describe('Pull request panel', () => {
       mergeRequest = JSON.stringify(route.request().postDataJSON());
       await route.fulfill({ status: 200, json: { queued: false, merged: true, message: 'Merged' } });
     });
-    page.on('dialog', async (dialog) => dialog.accept());
     await loadPage(page);
     await openPRPanel(page);
 
@@ -213,6 +215,8 @@ test.describe('Pull request panel', () => {
     await expect(method).toHaveValue('rebase');
     await method.selectOption('merge');
     await page.getByRole('button', { name: 'Merge', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Merge pull request?' })
+      .getByRole('button', { name: 'Merge pull request' }).click();
     await expect.poll(() => mergeRequest).toBe(JSON.stringify({ head_sha: 'abc123def456', method: 'merge' }));
   });
 
@@ -222,11 +226,12 @@ test.describe('Pull request panel', () => {
     await page.route('**/api/change/merge', async (route) => {
       await route.fulfill({ status: 409, json: { error: 'Head SHA is stale; refresh and try again' } });
     });
-    page.on('dialog', async (dialog) => dialog.accept());
     await loadPage(page);
     await openPRPanel(page);
 
     await page.getByRole('button', { name: 'Merge', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Merge pull request?' })
+      .getByRole('button', { name: 'Merge pull request' }).click();
     await expect(page.locator('.mini-toast')).toContainText('Head SHA is stale; refresh and try again');
   });
 

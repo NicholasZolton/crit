@@ -2677,6 +2677,19 @@ textarea.drag-active {
 }
 .confirm-send-anyway:hover { color: var(--crit-editor-fg-secondary); }
 
+.pr-merge-confirm-dialog { text-align: left; }
+.pr-merge-confirm-kicker {
+  color: var(--crit-editor-fg-muted);
+  font-family: var(--crit-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+.pr-merge-confirm-dialog .confirm-actions-row { justify-content: flex-end; }
+.pr-merge-confirm-dialog .confirm-actions-row .btn { min-width: 0; }
+
 /* ===== Settings Panel Overlay ===== */
 .settings-overlay {
   display: none;

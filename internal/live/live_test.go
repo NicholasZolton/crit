@@ -497,6 +497,51 @@ func TestParseLiveCLIFlags(t *testing.T) {
 	}
 }
 
+func TestParseLiveCLIFlags_PortlessService(t *testing.T) {
+	f := parseLiveCLIFlags([]string{"portless", "web", "--no-open"})
+	if f.portlessService != "web" {
+		t.Fatalf("portlessService = %q, want web", f.portlessService)
+	}
+	if f.origin != "" {
+		t.Fatalf("origin = %q before Portless lookup, want empty", f.origin)
+	}
+	if !f.noOpen {
+		t.Fatal("--no-open was not parsed after Portless arguments")
+	}
+}
+
+func TestResolveLiveOrigin_PortlessService(t *testing.T) {
+	originalLookup := lookupPortlessServiceURL
+	t.Cleanup(func() { lookupPortlessServiceURL = originalLookup })
+	requestedService := ""
+	lookupPortlessServiceURL = func(service string) (string, error) {
+		requestedService = service
+		return "https://feature.web.project.localhost:1355/dashboard?tab=one#results\n", nil
+	}
+	f := liveCLIFlags{portlessService: "web"}
+	if err := resolveLiveOrigin(&f); err != nil {
+		t.Fatal(err)
+	}
+	if requestedService != "web" {
+		t.Fatalf("looked up %q, want web", requestedService)
+	}
+	if f.origin != "https://feature.web.project.localhost:1355/dashboard" {
+		t.Fatalf("origin = %q", f.origin)
+	}
+}
+
+func TestResolveLiveOrigin_RejectsInvalidPortlessOutput(t *testing.T) {
+	originalLookup := lookupPortlessServiceURL
+	t.Cleanup(func() { lookupPortlessServiceURL = originalLookup })
+	lookupPortlessServiceURL = func(string) (string, error) {
+		return "not a URL", nil
+	}
+	f := liveCLIFlags{portlessService: "web"}
+	if err := resolveLiveOrigin(&f); err == nil {
+		t.Fatal("expected invalid Portless output to fail")
+	}
+}
+
 func TestBuildLiveDaemonArgs(t *testing.T) {
 	f := liveCLIFlags{port: 9000, host: "127.0.0.1", publicURL: "https://mymac.ts.net", quiet: true}
 	cfg := Config{Port: 3000, Quiet: false, PublicURL: "https://ignored.example.com"}

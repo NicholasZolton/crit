@@ -3,12 +3,14 @@ package live
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"regexp"
 	"strings"
@@ -64,11 +66,12 @@ func detectFrameworks(body []byte) []string {
 var smokeClient = &http.Client{Timeout: 10 * time.Second}
 
 var (
-	startLiveDaemon                = daemon.StartDaemon
-	runLiveClient                  = daemon.RunReviewClient
-	installLiveDaemonSignalHandler = installDaemonSignalHandler
-	openLiveBrowser                = browser.OpenBrowserWithCommand
-	launchLiveBrowser              = func(url, openCmd string) {
+	startLiveDaemon                                             = daemon.StartDaemon
+	runLiveClient                                               = daemon.RunReviewClient
+	installLiveDaemonSignalHandler                              = installDaemonSignalHandler
+	openLiveBrowser                                             = browser.OpenBrowserWithCommand
+	lookupPortlessServiceURL       func(string) (string, error) = defaultLookupPortlessServiceURL
+	launchLiveBrowser                                           = func(url, openCmd string) {
 		go openLiveBrowser(url, openCmd)
 	}
 )
@@ -180,6 +183,7 @@ type liveCLIFlags struct {
 	cookieFile                  string
 	cdpURL                      string
 	origin                      string
+	portlessService             string
 }
 
 func parseLiveCLIFlags(args []string) liveCLIFlags {
@@ -206,24 +210,28 @@ func parseLiveCLIFlags(args []string) liveCLIFlags {
 	})
 	fs.Parse(args)
 
-	rawURL := ""
-	for _, a := range fs.Args() {
-		if len(a) > 0 && a[0] != '-' {
-			rawURL = a
-			break
-		}
-	}
-	if rawURL == "" {
+	positional := fs.Args()
+	if len(positional) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: crit live <url>")
 		os.Exit(1)
 	}
-	u, err := url.Parse(rawURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		fmt.Fprintf(os.Stderr, "crit live: %q is not a valid http/https URL\n", rawURL)
-		os.Exit(1)
+	rawURL := positional[0]
+	portlessService := ""
+	if rawURL == "portless" {
+		if len(positional) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: crit live portless <service>")
+			os.Exit(1)
+		}
+		portlessService = positional[1]
+		rawURL = ""
+	} else {
+		var err error
+		rawURL, err = normalizeLiveURL(rawURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "crit live: %v\n", err)
+			os.Exit(1)
+		}
 	}
-	u.RawQuery = ""
-	u.Fragment = ""
 	return liveCLIFlags{
 		port:                        *port,
 		host:                        *host,
@@ -235,8 +243,53 @@ func parseLiveCLIFlags(args []string) liveCLIFlags {
 		cookieFlags:                 cookieFlags,
 		cookieFile:                  *cookieFile,
 		cdpURL:                      *cdpURL,
-		origin:                      strings.TrimSuffix(u.String(), "/"),
+		origin:                      rawURL,
+		portlessService:             portlessService,
 	}
+}
+
+func normalizeLiveURL(rawURL string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("%q is not a valid http/https URL", rawURL)
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return strings.TrimSuffix(u.String(), "/"), nil
+}
+
+func defaultLookupPortlessServiceURL(service string) (string, error) {
+	path, err := exec.LookPath("portless")
+	if err != nil {
+		return "", fmt.Errorf("portless executable not found in PATH")
+	}
+	cmd := exec.Command(path, "get", service)
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if detail := strings.TrimSpace(string(exitErr.Stderr)); detail != "" {
+				return "", fmt.Errorf("portless get %q: %s", service, detail)
+			}
+		}
+		return "", fmt.Errorf("portless get %q: %w", service, err)
+	}
+	return string(output), nil
+}
+
+func resolveLiveOrigin(f *liveCLIFlags) error {
+	if f.portlessService == "" {
+		return nil
+	}
+	rawURL, err := lookupPortlessServiceURL(f.portlessService)
+	if err != nil {
+		return err
+	}
+	f.origin, err = normalizeLiveURL(rawURL)
+	if err != nil {
+		return fmt.Errorf("portless get %q returned %w", f.portlessService, err)
+	}
+	return nil
 }
 
 func buildLiveDaemonArgs(origin, liveCookies string, f liveCLIFlags, cfg config.Config, noOpenResolved bool) []string {
@@ -258,6 +311,10 @@ func buildLiveDaemonArgs(origin, liveCookies string, f liveCLIFlags, cfg config.
 // RunLive starts a live-mode review of a running web app.
 func RunLive(args []string) {
 	f := parseLiveCLIFlags(args)
+	if err := resolveLiveOrigin(&f); err != nil {
+		fmt.Fprintf(os.Stderr, "crit live portless: %v\n", err)
+		os.Exit(1)
+	}
 
 	cwd, err := daemon.ResolvedCWD()
 	if err != nil {

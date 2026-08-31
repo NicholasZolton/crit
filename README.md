@@ -91,9 +91,14 @@ setup.
 
 ### Live mode
 
-`crit live <url>` (or `crit <url>`) proxies a running dev server through Crit's review UI. Crit's iframe loads the app on a different origin/port than your browser tab, so **host-scoped session cookies are not shared automatically**. If the direct URL works but Crit shows a login page or hydration mismatch, forward the upstream cookies:
+`crit live <url>` (or `crit <url>`) proxies a running dev server through Crit's review UI. For a named [Portless](https://github.com/vercel-labs/portless) service, use `crit live portless <service>`; Crit delegates URL and worktree-prefix resolution to `portless get`.
+
+Crit's iframe loads the app on a different origin/port than your browser tab, so **host-scoped session cookies are not shared automatically**. If the direct URL works but Crit shows a login page or hydration mismatch, forward the upstream cookies:
 
 ```bash
+# resolve the current worktree's Portless route for the "web" service
+crit live portless web
+
 # one-off
 crit live http://localhost:4000/dashboard --cookie "_crit_key=..."
 

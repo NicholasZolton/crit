@@ -101,8 +101,11 @@ Options:
       --no-open               Do not open a browser
   -o, --output <dir>          Crit data root for reviews`},
 	{name: "live", handler: runLive, help: `Usage: crit live [options] <url>
+       crit live [options] portless <service>
 
 Review a running web application in live mode.
+
+Portless service names are resolved with "portless get <service>".
 
 Options:
   -p, --port <port>        Port to listen on
@@ -283,6 +286,7 @@ Review:
   crit                                       Auto-detect changed files via git
   crit <file|dir> [...]                      Review specific files or directories
   crit live <url>                            Review a running web app in live mode
+  crit live portless <service>               Review a named Portless service
   crit preview <file.html>                   Review a local HTML file in preview mode
   crit --pr <num|url>                        Review a GitHub pull request
   crit --mr <iid|url>                        Review a GitLab merge request

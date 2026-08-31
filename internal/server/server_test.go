@@ -721,6 +721,9 @@ func TestFinish_IncludesStructuredComments(t *testing.T) {
 	if !strings.Contains(prompt, "fix this") {
 		t.Errorf("expected comment body in finish prompt, got: %s", prompt)
 	}
+	if !strings.Contains(prompt, "```toon") || strings.Contains(prompt, `"body":"fix this"`) {
+		t.Errorf("finish prompt should embed comments as TOON, got: %s", prompt)
+	}
 	if !strings.Contains(prompt, "Address each comment") {
 		t.Errorf("expected instructions in prompt, got: %s", prompt)
 	}

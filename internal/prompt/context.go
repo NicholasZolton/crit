@@ -21,6 +21,7 @@ type Context struct {
 	SessionStats           *SessionStats
 	PlanSlug               string
 	CommentsUnresolvedJSON string // unresolved threads only
+	CommentsUnresolvedTOON string // unresolved threads only, for agent-facing prompts
 	CommentsJSON           string // all comments in the session
 	Approved               bool
 	InternalSessionMode    string // files | git | plan — for default action builders
@@ -40,6 +41,7 @@ func (c Context) TemplateData() map[string]any {
 		"files_with_comments":      c.FilesWithComments,
 		"plan_slug":                c.PlanSlug,
 		"comments_unresolved_json": c.CommentsUnresolvedJSON,
+		"comments_unresolved_toon": c.CommentsUnresolvedTOON,
 		"comments_json":            c.CommentsJSON,
 		"approved":                 c.Approved,
 		"internal_session_mode":    c.InternalSessionMode,

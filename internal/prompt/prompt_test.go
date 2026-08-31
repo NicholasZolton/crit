@@ -86,6 +86,7 @@ func TestRenderFinish_DefaultUnchanged(t *testing.T) {
 		UnresolvedCount:        2,
 		TotalCount:             2,
 		CommentsUnresolvedJSON: `[{"id":"c_1","body":"fix"}]`,
+		CommentsUnresolvedTOON: "comments[1]{body,id}:\n  fix,c_1",
 		InternalSessionMode:    "files",
 		Approved:               false,
 	}
@@ -94,7 +95,10 @@ func TestRenderFinish_DefaultUnchanged(t *testing.T) {
 		t.Fatalf("prompt: %q", result.Prompt)
 	}
 	if !strings.Contains(result.Prompt, "fix") {
-		t.Fatalf("prompt should embed comments_json: %q", result.Prompt)
+		t.Fatalf("prompt should embed comments TOON: %q", result.Prompt)
+	}
+	if !strings.Contains(result.Prompt, "```toon") {
+		t.Fatalf("prompt should label comments as TOON: %q", result.Prompt)
 	}
 	if !strings.Contains(result.Prompt, "Address each comment") {
 		t.Fatalf("prompt: %q", result.Prompt)
@@ -134,6 +138,7 @@ func TestRenderFinish_StoryUsesStockBeforeGenericUserPrompt(t *testing.T) {
 		Mode:                   "story",
 		UnresolvedCount:        1,
 		CommentsUnresolvedJSON: `[{"id":"c_1","body":"fix"}]`,
+		CommentsUnresolvedTOON: "comments[1]{body,id}:\n  fix,c_1",
 		InternalSessionMode:    "git",
 		Approved:               false,
 	}

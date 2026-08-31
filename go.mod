@@ -16,3 +16,5 @@ require golang.org/x/net v0.55.0
 require github.com/gorilla/websocket v1.5.3
 
 require golang.org/x/image v0.44.0
+
+require github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c

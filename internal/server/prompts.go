@@ -13,6 +13,7 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/hooks"
 	"github.com/tomasz-tomczyk/crit/internal/prompt"
 	"github.com/tomasz-tomczyk/crit/internal/session"
+	toon "github.com/toon-format/toon-go"
 )
 
 func (s *Server) promptTrustState() (prompt.TrustState, error) {
@@ -48,6 +49,12 @@ func (s *Server) buildPromptContext(sess *Session, approved bool, stats map[stri
 	if len(unresolved) > 0 {
 		if b, err := json.Marshal(unresolved); err == nil {
 			ctx.CommentsUnresolvedJSON = string(b)
+			var normalized any
+			if json.Unmarshal(b, &normalized) == nil {
+				if encoded, encodeErr := toon.MarshalString(map[string]any{"comments": normalized}); encodeErr == nil {
+					ctx.CommentsUnresolvedTOON = encoded
+				}
+			}
 		}
 	}
 	if all := listAllComments(sess); len(all) > 0 {

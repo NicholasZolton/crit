@@ -141,7 +141,8 @@ Templates receive these variables (snake_case in templates):
 | `{{.total_count}}` | Total comments in the session |
 | `{{.files_with_comments}}` | List of file paths with unresolved comments |
 | `{{.plan_slug}}` | Plan slug when reviewing a plan file |
-| `{{.comments_unresolved_json}}` | JSON array of unresolved comments (threads where `resolved` is false) — stock unresolved finish embeds this in stdout |
+| `{{.comments_unresolved_json}}` | JSON array of unresolved comments (threads where `resolved` is false) |
+| `{{.comments_unresolved_toon}}` | TOON encoding of unresolved comments — used by the stock unresolved finish prompt |
 | `{{.comments_json}}` | JSON array of **all** comments in the session (resolved and unresolved) |
 | `{{.session_stats.duration_seconds}}` | Session duration (when available) |
 | `{{.session_stats.files_reviewed}}` | Files reviewed |
@@ -236,7 +237,7 @@ When no project or global template matches, behavior is unchanged from stock Cri
 
 | Output | Content |
 | ------ | ------- |
-| **stdout** | Rendered `prompt` text — stock defaults embed `comments_unresolved_json` on unresolved finish and `comments_json` on approve. Custom templates choose what to include. |
+| **stdout** | Rendered `prompt` text — stock defaults embed `comments_unresolved_toon` on unresolved finish. Custom templates choose what to include. |
 | **stderr** | `approved: true` or `approved: false`, plus session stats on approve |
 
 `/api/finish` and `/api/review-cycle` still return JSON for the browser and plan hooks. Only the foreground `crit` client writes text to stdout.
@@ -248,7 +249,7 @@ When no project or global template matches, behavior is unchanged from stock Cri
 | `comments` | Structured consumers | Unresolved comment objects (empty on approve) |
 | `prompt` | Blocking stdout, finish modal, clipboard, plan hooks | Full rendered body (count line, embedded comments JSON, actions, reconnect) |
 
-Custom templates choose what to include. Omit `{{.comments_unresolved_json}}` / `{{.comments_json}}` to keep comment data out of the prompt text; the API `comments` field is unchanged.
+Custom templates choose what to include. Omit the comment variables to keep comment data out of the prompt text; the API `comments` field is unchanged.
 
 ## Limitations
 

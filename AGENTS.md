@@ -55,6 +55,8 @@ make build-all                                        # Cross-compile to dist/
 ./crit test-plan.md                                   # Review specific file(s)
 ./crit --no-open --port 3000 test-plan.md             # Headless on fixed port
 ```
+
+On Nicholas's workstation, `~/.local/bin/crit` symlinks to the repository-root `crit` binary. Before declaring code or embedded-asset changes complete, run `mise exec -- make build` to update the installed version. If committing, rebuild after the commit so `crit --version` reports the current commit, then verify it with `crit --version`.
 </important>
 
 <important if="you need to know what crit subcommands do or are adding/modifying a CLI subcommand">

@@ -301,15 +301,32 @@ func runServe(args []string) {
 
 	if sess.Mode == "git" {
 		go func() {
-			provider, err := selectProvider(forge.Auto)
+			providerKind := forge.Auto
+			sess.RLock()
+			activeFocus := sess.Focus
+			sess.RUnlock()
+			if activeFocus.Kind == server.FocusRange && activeFocus.Forge != "" {
+				providerKind = forge.Kind(activeFocus.Forge)
+			}
+			provider, err := selectProvider(providerKind)
 			if err != nil {
 				return
 			}
 			repo := forge.RepoContext{Root: cwd}
-			changeID, err := provider.Detect(ctx, repo)
-			if err != nil {
-				return
+			var changeID forge.ChangeID
+			if activeFocus.Kind == server.FocusRange && activeFocus.ChangeNumber > 0 {
+				changeID = forge.ChangeID{
+					Number:  activeFocus.ChangeNumber,
+					Project: activeFocus.RemoteBaseProject,
+					Host:    activeFocus.RemoteHost,
+				}
+			} else {
+				changeID, err = provider.Detect(ctx, repo)
+				if err != nil {
+					return
+				}
 			}
+			srv.SetChangeContext(provider, repo, changeID)
 			change, err := provider.Get(ctx, repo, changeID)
 			if err != nil {
 				log.Printf("Warning: could not load active change request: %v", err)
@@ -318,9 +335,8 @@ func runServe(args []string) {
 			if !strings.EqualFold(change.State, "open") {
 				return
 			}
-			srv.SetChangeContext(provider, repo, changeID)
 			if provider.Kind() == forge.GitHub {
-				srv.SetPRInfo(prInfoFromChange(change))
+				srv.SetPRInfoFromChange(change)
 			}
 			syncCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 			defer cancel()
@@ -372,27 +388,5 @@ func runServe(args []string) {
 
 	if sess.ReviewFilePath != "" {
 		fmt.Fprintf(os.Stderr, "Review file: %s\n", reviewPathsFor(sess.ReviewFilePath).Review)
-	}
-}
-
-func prInfoFromChange(change forge.ChangeRequest) *PRInfo {
-	return &PRInfo{
-		URL:               change.URL,
-		Number:            change.ID.Number,
-		Title:             change.Title,
-		IsDraft:           change.Draft,
-		State:             change.State,
-		Body:              change.Body,
-		BaseRefName:       change.BaseRefName,
-		HeadRefName:       change.HeadRefName,
-		BaseRefOid:        change.BaseSHA,
-		HeadRefOid:        change.HeadSHA,
-		HeadRepoURL:       change.HeadRepo.CloneURL,
-		IsCrossRepository: change.CrossRepository,
-		Additions:         change.Additions,
-		Deletions:         change.Deletions,
-		ChangedFiles:      change.ChangedFiles,
-		AuthorLogin:       change.Author,
-		CreatedAt:         change.CreatedAt,
 	}
 }

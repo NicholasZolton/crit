@@ -8921,6 +8921,15 @@
 
   function updateCompareRefreshButton() {
     if (!compareRefreshBtnEl) return;
+    const focus = session && session.focus;
+    const prNumber = focus && focus.kind === 'range' && focus.pr_url && focus.change_number;
+    if (prNumber) {
+      const label = 'Fetch latest diff for PR #' + prNumber;
+      compareRefreshBtnEl.style.display = '';
+      compareRefreshBtnEl.title = label;
+      compareRefreshBtnEl.setAttribute('aria-label', label);
+      return;
+    }
     const branch = compareTargetChromeVisible() ? compareTargetRemoteBranch(currentCompareTarget) : '';
     compareRefreshBtnEl.style.display = branch ? '' : 'none';
     if (branch) {
@@ -9412,11 +9421,26 @@
 
   if (compareRefreshBtnEl) {
     compareRefreshBtnEl.addEventListener('click', async function() {
+      const focus = session && session.focus;
+      const prNumber = focus && focus.kind === 'range' && focus.pr_url && focus.change_number;
       const branch = compareTargetRemoteBranch(currentCompareTarget);
-      if (!branch || compareRefreshBtnEl.disabled) return;
+      if ((!prNumber && !branch) || compareRefreshBtnEl.disabled) return;
       compareRefreshBtnEl.disabled = true;
       compareRefreshBtnEl.classList.add('is-loading');
       try {
+        if (prNumber) {
+          const res = await fetch('/api/change/refresh', { method: 'POST' });
+          const result = await readPRResponse(res);
+          if (!res.ok) {
+            showMiniToast(prResponseError(result, 'Failed to refresh pull request diff'));
+            return;
+          }
+          await reloadForScope();
+          await refreshPRInfo();
+          refreshPRStatus();
+          showMiniToast(result.changed ? 'Loaded latest diff for PR #' + prNumber : 'PR #' + prNumber + ' is already up to date');
+          return;
+        }
         const res = await fetch('/api/base-branch/fetch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -9436,8 +9460,8 @@
         fetchCommits();
         showMiniToast('Comparing against latest origin/' + branch);
       } catch (err) {
-        console.error('Error fetching compare target:', err);
-        showMiniToast('Failed to fetch comparison branch');
+        console.error(prNumber ? 'Error refreshing pull request diff:' : 'Error fetching compare target:', err);
+        showMiniToast(prNumber ? 'Failed to refresh pull request diff' : 'Failed to fetch comparison branch');
       } finally {
         compareRefreshBtnEl.disabled = false;
         compareRefreshBtnEl.classList.remove('is-loading');

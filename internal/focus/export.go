@@ -1,5 +1,10 @@
 package focus
 
+import (
+	"github.com/tomasz-tomczyk/crit/internal/forge"
+	"github.com/tomasz-tomczyk/crit/internal/vcs"
+)
+
 // LooksLikePRURL reports whether spec is a GitHub pull request URL.
 func LooksLikePRURL(spec string) bool {
 	return prURLRe.MatchString(spec)
@@ -23,6 +28,28 @@ func ParseRangeSpec(spec string) (base, head string, err error) {
 // ParseScopeSpec normalizes a --scope flag value.
 func ParseScopeSpec(s string) (DiffScope, error) {
 	return parseScopeSpec(s)
+}
+
+// ResolveChangeFocus builds a fresh range focus from provider metadata.
+func ResolveChangeFocus(change forge.ChangeRequest, provider forge.Kind, scope DiffScope, remoteFiles bool, v vcs.VCS, repoRoot string) (*Focus, error) {
+	labelKind := "PR"
+	if provider == forge.GitLab {
+		labelKind = "MR"
+	}
+	return resolveFocusFromChange(ChangeResolveInfo{
+		URL:               change.URL,
+		Number:            change.ID.Number,
+		Title:             change.Title,
+		BaseRefOid:        change.BaseSHA,
+		HeadRefOid:        change.HeadSHA,
+		BaseRefName:       change.BaseRefName,
+		HeadRefName:       change.HeadRefName,
+		HeadRepoURL:       change.HeadRepo.CloneURL,
+		BaseRepoProject:   change.BaseRepo.Project,
+		HeadRepoProject:   change.HeadRepo.Project,
+		HeadRepoHost:      change.HeadRepo.Host,
+		IsCrossRepository: change.CrossRepository,
+	}, string(provider), labelKind, scope, remoteFiles, v, repoRoot)
 }
 
 // CommentScopeOverrideFromFlag normalizes the raw --scope string for crit comment.

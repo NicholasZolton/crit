@@ -39,7 +39,7 @@ func (Provider) Get(_ context.Context, _ forge.RepoContext, id forge.ChangeID) (
 		ID: id, URL: info.URL, Title: info.Title, Body: info.Body, State: info.State,
 		Draft: info.IsDraft, BaseRefName: info.BaseRefName, HeadRefName: info.HeadRefName,
 		BaseSHA: info.BaseRefOid, HeadSHA: info.HeadRefOid,
-		HeadRepo:        forge.RepoRef{Project: githubProject(info.HeadRepoURL)},
+		HeadRepo:        forge.RepoRef{Project: githubProject(info.HeadRepoURL), CloneURL: info.HeadRepoURL},
 		CrossRepository: info.IsCrossRepository, Additions: info.Additions,
 		Deletions: info.Deletions, ChangedFiles: info.ChangedFiles,
 		Author: info.AuthorLogin, CreatedAt: info.CreatedAt,

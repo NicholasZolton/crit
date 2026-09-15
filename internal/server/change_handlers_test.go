@@ -6,14 +6,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/tomasz-tomczyk/crit/internal/forge"
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/tomasz-tomczyk/crit/internal/vcs"
 )
 
 type fakeChangeProvider struct {
+	change     forge.ChangeRequest
 	status     forge.ChangeStatus
 	statusErr  error
 	merge      forge.MergeResult
@@ -22,6 +26,7 @@ type fakeChangeProvider struct {
 	syncResult forge.CommentSyncResult
 	syncErr    error
 	syncFn     func(forge.CommentSyncRequest) error
+	calls      []string
 }
 
 func (*fakeChangeProvider) Kind() forge.Kind                                     { return forge.GitHub }
@@ -29,8 +34,9 @@ func (*fakeChangeProvider) RequireAuth(context.Context, forge.RepoContext) error
 func (*fakeChangeProvider) Detect(context.Context, forge.RepoContext) (forge.ChangeID, error) {
 	return forge.ChangeID{}, nil
 }
-func (*fakeChangeProvider) Get(context.Context, forge.RepoContext, forge.ChangeID) (forge.ChangeRequest, error) {
-	return forge.ChangeRequest{}, nil
+func (p *fakeChangeProvider) Get(context.Context, forge.RepoContext, forge.ChangeID) (forge.ChangeRequest, error) {
+	p.calls = append(p.calls, "get")
+	return p.change, nil
 }
 func (*fakeChangeProvider) ListOpen(context.Context, forge.RepoContext) ([]forge.ChangeSummary, error) {
 	return nil, nil
@@ -44,7 +50,7 @@ func (*fakeChangeProvider) Push(context.Context, forge.PushRequest) (forge.PushR
 func (*fakeChangeProvider) FetchFile(context.Context, forge.RepoContext, forge.RepoRef, string, string) ([]byte, error) {
 	return nil, nil
 }
-func (*fakeChangeProvider) Invalidate(forge.ChangeID) {}
+func (p *fakeChangeProvider) Invalidate(forge.ChangeID) { p.calls = append(p.calls, "invalidate") }
 func (p *fakeChangeProvider) Status(context.Context, forge.RepoContext, forge.ChangeID) (forge.ChangeStatus, error) {
 	return p.status, p.statusErr
 }
@@ -87,6 +93,88 @@ func TestChangeStatusHTTP(t *testing.T) {
 	}
 	if status.HeadSHA != "abc" || !status.Ready {
 		t.Fatalf("response = %+v", status)
+	}
+}
+
+func TestChangeRefreshRebuildsFocusedDiff(t *testing.T) {
+	dir := testutil.InitTestRepo(t)
+	origin := t.TempDir()
+	testutil.Git(t, origin, "init", "--bare")
+	testutil.Git(t, dir, "remote", "add", "origin", origin)
+	testutil.Git(t, dir, "push", "-u", "origin", "main")
+	baseSHA := testutil.Git(t, dir, "rev-parse", "HEAD")
+	testutil.Git(t, dir, "checkout", "-b", "feature")
+	testutil.WriteFile(t, filepath.Join(dir, "review.txt"), "first\n")
+	testutil.Git(t, dir, "add", "review.txt")
+	testutil.Git(t, dir, "commit", "-m", "first version")
+	testutil.Git(t, dir, "push", "-u", "origin", "feature")
+	oldHeadSHA := testutil.Git(t, dir, "rev-parse", "HEAD")
+
+	oldFocus := Focus{
+		Kind:         FocusRange,
+		Forge:        string(forge.GitHub),
+		ChangeNumber: 42,
+		PRURL:        "https://github.com/acme/repo/pull/42",
+		BaseSHA:      baseSHA,
+		HeadSHA:      oldHeadSHA,
+		BaseRefName:  "main",
+		HeadRefName:  "feature",
+		DiffScope:    DiffScopeLayer,
+	}
+	comment := session.StampWithFocus(Comment{ID: "c1", StartLine: 1, EndLine: 1, Body: "keep me"}, oldFocus)
+	sess := &Session{
+		VCS:         &vcs.GitVCS{},
+		Mode:        "git",
+		Branch:      "feature",
+		RepoRoot:    dir,
+		ReviewRound: 1,
+		Focus:       oldFocus,
+		Files: []*FileEntry{{
+			Path: "review.txt", AbsPath: filepath.Join(dir, "review.txt"), Status: "added",
+			FileType: "code", Content: "first\n", Comments: []Comment{comment},
+		}},
+	}
+	sess.InitTestChannels()
+
+	agentRoot := t.TempDir()
+	agentDir := filepath.Join(agentRoot, "agent")
+	testutil.Git(t, agentRoot, "clone", "--branch", "feature", origin, agentDir)
+	testutil.Git(t, agentDir, "config", "user.email", "agent@test.com")
+	testutil.Git(t, agentDir, "config", "user.name", "Agent")
+	testutil.WriteFile(t, filepath.Join(agentDir, "review.txt"), "first\nsecond\n")
+	testutil.Git(t, agentDir, "add", "review.txt")
+	testutil.Git(t, agentDir, "commit", "-m", "updated version")
+	testutil.Git(t, agentDir, "push", "origin", "feature")
+	newHeadSHA := testutil.Git(t, agentDir, "rev-parse", "HEAD")
+
+	provider := &fakeChangeProvider{change: forge.ChangeRequest{
+		ID: forge.ChangeID{Number: 42}, URL: oldFocus.PRURL, Title: "Updated PR",
+		BaseRefName: "main", HeadRefName: "feature", BaseSHA: baseSHA, HeadSHA: newHeadSHA,
+	}}
+	s, err := NewServer(sess, frontendFS, "", false, "", "", "test", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetChangeContext(provider, forge.RepoContext{Root: dir}, forge.ChangeID{Number: 42})
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/change/refresh", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if got := provider.calls; len(got) != 2 || got[0] != "invalidate" || got[1] != "get" {
+		t.Fatalf("provider calls = %v, want [invalidate get]", got)
+	}
+	sess.RLock()
+	defer sess.RUnlock()
+	if sess.Focus.HeadSHA != newHeadSHA {
+		t.Fatalf("head SHA = %q, want %q", sess.Focus.HeadSHA, newHeadSHA)
+	}
+	if len(sess.Files) != 1 || sess.Files[0].Content != "first\nsecond\n" {
+		t.Fatalf("refreshed files = %+v", sess.Files)
+	}
+	if len(sess.Files[0].Comments) != 1 || sess.Files[0].Comments[0].ID != "c1" {
+		t.Fatalf("comments after refresh = %+v", sess.Files[0].Comments)
 	}
 }
 
@@ -206,6 +294,7 @@ func TestChangeRoutesRejectWrongMethods(t *testing.T) {
 	s.SetChangeContext(provider, forge.RepoContext{Root: s.projectDir}, forge.ChangeID{Number: 42})
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodPost, "/api/change/status", nil),
+		httptest.NewRequest(http.MethodGet, "/api/change/refresh", nil),
 		httptest.NewRequest(http.MethodGet, "/api/change/comments/sync", nil),
 		httptest.NewRequest(http.MethodGet, "/api/change/merge", nil),
 	} {

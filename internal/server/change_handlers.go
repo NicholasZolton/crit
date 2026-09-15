@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tomasz-tomczyk/crit/internal/focus"
 	"github.com/tomasz-tomczyk/crit/internal/forge"
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
@@ -45,6 +46,77 @@ func (s *Server) handleChangeStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, status)
+}
+
+func (s *Server) handleChangeRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	provider, repo, id, ok := s.currentChange()
+	if !ok {
+		http.Error(w, errNoChangeForSession.Error(), http.StatusNotFound)
+		return
+	}
+
+	sess := s.session.Load()
+	sess.RLock()
+	current := sess.Focus
+	remoteFiles := sess.RemoteFiles
+	vc := sess.VCS
+	repoRoot := sess.RepoRoot
+	sess.RUnlock()
+	if current.Kind != session.FocusRange || current.ChangeNumber != id.Number ||
+		(current.Forge != "" && current.Forge != string(provider.Kind())) {
+		http.Error(w, "active diff is not focused on this change request", http.StatusConflict)
+		return
+	}
+
+	provider.Invalidate(id)
+	change, err := provider.Get(r.Context(), repo, id)
+	if err != nil {
+		s.writeForgeError(w, err)
+		return
+	}
+	refreshed, err := focus.ResolveChangeFocus(change, provider.Kind(), current.DiffScope, remoteFiles, vc, repoRoot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if err := sess.SetFocus(*refreshed); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if provider.Kind() == forge.GitHub {
+		s.SetPRInfoFromChange(change)
+	}
+	writeJSON(w, map[string]any{
+		"changed":  current.BaseSHA != refreshed.BaseSHA || current.HeadSHA != refreshed.HeadSHA,
+		"base_sha": refreshed.BaseSHA,
+		"head_sha": refreshed.HeadSHA,
+	})
+}
+
+func prInfoFromChange(change forge.ChangeRequest) *PRInfo {
+	return &PRInfo{
+		URL:               change.URL,
+		Number:            change.ID.Number,
+		Title:             change.Title,
+		IsDraft:           change.Draft,
+		State:             change.State,
+		Body:              change.Body,
+		BaseRefName:       change.BaseRefName,
+		HeadRefName:       change.HeadRefName,
+		BaseRefOid:        change.BaseSHA,
+		HeadRefOid:        change.HeadSHA,
+		HeadRepoURL:       change.HeadRepo.CloneURL,
+		IsCrossRepository: change.CrossRepository,
+		Additions:         change.Additions,
+		Deletions:         change.Deletions,
+		ChangedFiles:      change.ChangedFiles,
+		AuthorLogin:       change.Author,
+		CreatedAt:         change.CreatedAt,
+	}
 }
 
 func (s *Server) handleChangeCommentsSync(w http.ResponseWriter, r *http.Request) {

@@ -91,7 +91,8 @@ func TestGitHubProviderGetTranslatesMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if change.Title != "Feature" || change.HeadRepo.Project != "alice/widget" || !change.CrossRepository || change.Additions != 10 {
+	if change.Title != "Feature" || change.HeadRepo.Project != "alice/widget" ||
+		change.HeadRepo.CloneURL != "https://github.com/alice/widget.git" || !change.CrossRepository || change.Additions != 10 {
 		t.Fatalf("change = %+v", change)
 	}
 	if _, err := p.Get(context.Background(), forge.RepoContext{}, forge.ChangeID{Number: 99}); !errors.Is(err, wantErr) {

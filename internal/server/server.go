@@ -209,6 +209,7 @@ func NewServer(session *Session, frontendFS embed.FS, shareURL string, proxyAuth
 	mux.HandleFunc("/api/files/list", s.withReady(s.handleFilesList))
 	mux.HandleFunc("/api/story", s.withReady(s.handleStory))
 	mux.HandleFunc("/api/change/status", s.withReady(s.handleChangeStatus))
+	mux.HandleFunc("/api/change/refresh", s.withReady(s.handleChangeRefresh))
 	mux.HandleFunc("/api/change/comments/sync", s.withReady(s.handleChangeCommentsSync))
 	mux.HandleFunc("/api/change/merge", s.withReady(s.handleChangeMerge))
 
@@ -440,6 +441,11 @@ func (s *Server) SetPRInfo(prInfo *PRInfo) {
 	if sess := s.session.Load(); sess != nil {
 		sess.Notify(SSEEvent{Type: "pr-info-changed"})
 	}
+}
+
+// SetPRInfoFromChange updates the GitHub-specific UI metadata from a normalized change request.
+func (s *Server) SetPRInfoFromChange(change forge.ChangeRequest) {
+	s.SetPRInfo(prInfoFromChange(change))
 }
 
 // SetChangeContext configures the active provider-neutral change request.

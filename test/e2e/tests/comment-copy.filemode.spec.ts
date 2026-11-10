@@ -64,7 +64,7 @@ test.describe('Comment copy — File Mode', () => {
     await expect(copyBtn.locator('.copy-label')).toHaveText('Copied');
     expect(await readClipboard(page)).toBe(
       `Author: ${AUTHOR}\n\nGeneral feedback.` +
-      '\n\n---\n\n' +
+      '\n\n\n' +
       `File: ${mdPath}\nLine(s): 3\nAuthor: ${AUTHOR}\n\nLine feedback.`,
     );
   });

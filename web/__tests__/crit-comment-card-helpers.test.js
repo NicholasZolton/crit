@@ -140,6 +140,6 @@ test('formatCommentsPlainText joins listed comments using each comment path', ()
   ];
   assert.equal(
     helpers.formatCommentsPlainText(listed),
-    'Author: Nicholas\n\nGeneral note.\n\n---\n\nFile: a.go\nLine(s): 4\nAuthor: Nicholas\n\nLine note.',
+    'Author: Nicholas\n\nGeneral note.\n\n\nFile: a.go\nLine(s): 4\nAuthor: Nicholas\n\nLine note.',
   );
 });

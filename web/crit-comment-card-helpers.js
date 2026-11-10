@@ -105,11 +105,12 @@
   }
 
   // formatCommentsPlainText — joins comments that carry their own `path` (the
-  // shape /api/finish returns) into one block.
+  // shape /api/finish returns) into one block. Two blank lines separate
+  // comments, since one already separates each header from its body.
   function formatCommentsPlainText(comments) {
     return comments
       .map(function (c) { return formatCommentPlainText(c, c.path); })
-      .join('\n\n---\n\n');
+      .join('\n\n\n');
   }
 
   // Standard class strings. These are deliberately simple constants so that

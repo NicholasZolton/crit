@@ -93,3 +93,53 @@ test('class constants are stable strings', () => {
   assert.equal(helpers.COMMENT_BODY_CLASS, 'comment-body');
   assert.equal(helpers.COMMENT_ACTIONS_CLASS, 'comment-actions');
 });
+
+const formatCases = [
+  {
+    name: 'single-line comment',
+    comment: { start_line: 22, end_line: 22, author: 'Nicholas', body: 'Reuse the theme var.' },
+    path: 'web/theme.js',
+    want: 'File: web/theme.js\nLine(s): 22\nAuthor: Nicholas\n\nReuse the theme var.',
+  },
+  {
+    name: 'multi-line range',
+    comment: { start_line: 3, end_line: 7, author: 'Nicholas', body: 'Extract a helper.' },
+    path: 'main.go',
+    want: 'File: main.go\nLine(s): 3-7\nAuthor: Nicholas\n\nExtract a helper.',
+  },
+  {
+    name: 'file-level comment omits Line(s)',
+    comment: { scope: 'file', start_line: 0, end_line: 0, author: 'Nicholas', body: 'Split this file.' },
+    path: 'app.js',
+    want: 'File: app.js\nAuthor: Nicholas\n\nSplit this file.',
+  },
+  {
+    name: 'review-level comment omits File and Line(s)',
+    comment: { scope: 'review', start_line: 0, end_line: 0, author: 'Nicholas', body: 'Looks good overall.' },
+    path: '',
+    want: 'Author: Nicholas\n\nLooks good overall.',
+  },
+  {
+    name: 'no metadata returns the body alone',
+    comment: { body: 'Bare body.' },
+    path: undefined,
+    want: 'Bare body.',
+  },
+];
+
+formatCases.forEach(({ name, comment, path, want }) => {
+  test('formatCommentPlainText: ' + name, () => {
+    assert.equal(helpers.formatCommentPlainText(comment, path), want);
+  });
+});
+
+test('formatCommentsPlainText joins listed comments using each comment path', () => {
+  const listed = [
+    { scope: 'review', author: 'Nicholas', body: 'General note.' },
+    { scope: 'line', path: 'a.go', start_line: 4, end_line: 4, author: 'Nicholas', body: 'Line note.' },
+  ];
+  assert.equal(
+    helpers.formatCommentsPlainText(listed),
+    'Author: Nicholas\n\nGeneral note.\n\n---\n\nFile: a.go\nLine(s): 4\nAuthor: Nicholas\n\nLine note.',
+  );
+});

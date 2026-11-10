@@ -487,17 +487,18 @@ test('runFinishReview not-approved path: leaves approved class off + uses prompt
     json: async () => ({
       approved: false,
       prompt: 'The review finished with 2 unresolved comments.\n\n[{"body":"fix"}]\n\nAddress each comment.\n\nWhen you\'re done, run:\n\n  crit test.md',
+      comments: [{ scope: 'review', body: 'fix' }],
     }),
   });
   const { shared: s, els } = makeFinishSandbox(fetch, { writeText: async () => {} });
-  let waitingCalled = false;
-  const result = await s.runFinishReview({ onWaiting: () => { waitingCalled = true; } });
+  let waitingComments = null;
+  const result = await s.runFinishReview({ onWaiting: (comments) => { waitingComments = comments; } });
   assert.equal(result.approved, false);
   assert.match(result.prompt, /Address each comment/);
   assert.equal(els.waitingHeading.textContent, 'Review Complete');
   assert.match(els.waitingMessage.textContent, /wasn't listening/);
   assert.equal(els.waitingDialog.classList.contains('approved'), false);
-  assert.equal(waitingCalled, true);
+  assert.deepEqual(waitingComments, [{ scope: 'review', body: 'fix' }]);
 });
 
 test('runFinishReview not-approved path: falls back when prompt missing', async () => {

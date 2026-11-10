@@ -84,6 +84,34 @@
     return 'pin';
   }
 
+  // formatCommentPlainText — plain-text copy of one comment for pasting into an
+  // agent. Shared by the per-card Copy button and the finish dialog's copy-all
+  // row. Missing fields are dropped: review-level comments have no path, and
+  // review- or file-level comments have no line range.
+  function formatCommentPlainText(comment, path) {
+    var fields = [];
+    if (path) fields.push('File: ' + path);
+    var lineRange = commentLineRange(comment);
+    if (lineRange) fields.push('Line(s): ' + lineRange);
+    if (comment.author) fields.push('Author: ' + comment.author);
+    var body = comment.body || '';
+    return fields.length ? fields.join('\n') + '\n\n' + body : body;
+  }
+
+  function commentLineRange(comment) {
+    var start = comment.start_line;
+    if (comment.scope === 'file' || !(start > 0)) return '';
+    return comment.end_line > start ? start + '-' + comment.end_line : String(start);
+  }
+
+  // formatCommentsPlainText — joins comments that carry their own `path` (the
+  // shape /api/finish returns) into one block.
+  function formatCommentsPlainText(comments) {
+    return comments
+      .map(function (c) { return formatCommentPlainText(c, c.path); })
+      .join('\n\n---\n\n');
+  }
+
   // Standard class strings. These are deliberately simple constants so that
   // both renderers stay in sync if we tweak them later. Adding a class here
   // does NOT make every existing card pick it up — call sites still need to
@@ -102,6 +130,8 @@
     formatTime: formatTime,
     formKeyFor: formKeyFor,
     authorColorIndex: authorColorIndex,
+    formatCommentPlainText: formatCommentPlainText,
+    formatCommentsPlainText: formatCommentsPlainText,
     AUTHOR_COLOR_COUNT: AUTHOR_COLOR_COUNT,
     BTN_CLASS: BTN_CLASS,
     BTN_SM_CLASS: BTN_SM_CLASS,

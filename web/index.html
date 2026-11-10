@@ -232,6 +232,14 @@
         <span class="copy-label">Copy</span>
       </button>
     </div>
+    <!-- Comments copy row: the unresolved comments the prompt covers, as plain text -->
+    <div class="prompt-copy-row comments-copy-row" id="commentsCopyRow" style="display:none">
+      <span class="prompt-preview" id="commentsCopyPreview"></span>
+      <button class="prompt-copy-btn" id="commentsClipboard" aria-label="Copy comments to clipboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        <span class="copy-label">Copy</span>
+      </button>
+    </div>
     <div class="prompt-full-text" id="waitingPrompt"></div>
 
     <!-- Divider -->

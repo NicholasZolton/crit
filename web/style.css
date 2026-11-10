@@ -1578,10 +1578,13 @@ body.dragging { user-select: none; cursor: grabbing; }
   color: var(--crit-editor-fg-muted);
 }
 
+/* Narrow cards wrap whole header items rather than breaking "Lines 8-12" mid-text. */
 .comment-header-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .comment-author-badge {
@@ -2497,6 +2500,10 @@ textarea.drag-active {
   border: none;
   border-radius: var(--crit-r-lg);
   overflow: hidden;
+}
+
+.comments-copy-row {
+  margin-top: 8px;
 }
 
 .prompt-preview {
@@ -3813,10 +3820,6 @@ body.sidebar-resizing * {
 .panel-comment-block {
   padding: 0 12px;
   margin: 0;
-}
-.panel-comment-block .comment-header-left {
-  min-width: 0;
-  flex-wrap: wrap;
 }
 
 /* Panel general comment form */

@@ -1264,6 +1264,8 @@
   const escapeHtml = _ccHelpers.escapeHtml;
   const relativeTime = _ccHelpers.relativeTime;
   const formatTime = _ccHelpers.formatTime;
+  const formatCommentPlainText = _ccHelpers.formatCommentPlainText;
+  const formatCommentsPlainText = _ccHelpers.formatCommentsPlainText;
 
   function getFileByPath(path) {
     return files.find(f => f.path === path);
@@ -6036,7 +6038,8 @@
   // Code-review-internal callers pass a sparse opts object; this wrapper
   // injects the module-scoped deps and the default override callbacks. The
   // real implementation lives in frontend/crit-comment-card.js so live-mode
-  // can mount the same renderer with its own deps.
+  // can mount the same renderer with its own deps. Every code-review card
+  // starts with a Copy action; callers append their own actions after it.
   function buildCommentCard(comment, filePath, opts) {
     opts = opts || {};
     const merged = Object.assign({}, opts);
@@ -6064,7 +6067,27 @@
       iconChevron: ICON_CHEVRON,
       linkifyDom: linkifyCommentRefsInDom,
     }, opts.deps || {});
-    return window.crit.commentCard.buildCommentCard(comment, filePath, merged);
+    const parts = window.crit.commentCard.buildCommentCard(comment, filePath, merged);
+    parts.actions.appendChild(createCopyCommentButton(comment, filePath));
+    return parts;
+  }
+
+  function createCopyCommentButton(comment, filePath) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = 'Copy comment';
+    btn.setAttribute('aria-label', 'Copy comment');
+    btn.innerHTML = ICON_CLIPBOARD;
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      navigator.clipboard.writeText(formatCommentPlainText(comment, filePath)).then(function() {
+        btn.innerHTML = ICON_CHECK_SMALL;
+        btn.setAttribute('aria-label', 'Copied!');
+        announceCopy();
+        setTimeout(function() { btn.innerHTML = ICON_CLIPBOARD; btn.setAttribute('aria-label', 'Copy comment'); }, 1500);
+      }).catch(function() { showMiniToast('Failed to copy comment'); });
+    });
+    return btn;
   }
 
   function createCommentElement(comment, filePath) {
@@ -8136,7 +8159,11 @@
         });
       },
       onApproved: function () { waitingNotApproved = false; setUIState('waiting'); },
-      onWaiting: function () { waitingNotApproved = true; setUIState('waiting'); },
+      onWaiting: function (comments) {
+        waitingNotApproved = true;
+        setFinishCommentsCopy(comments);
+        setUIState('waiting');
+      },
       onError: function (err) {
         console.error('Error finishing review:', err);
         showMiniToast('Failed to finish review');
@@ -8234,22 +8261,41 @@
     if (e.target === this) setUIState('reviewing');
   });
 
-  document.getElementById('waitingClipboard').addEventListener('click', async function() {
-    const prompt = document.getElementById('waitingPrompt').textContent;
+  // Copies text from one of the waiting dialog's Copy buttons and flashes its
+  // "Copied" state.
+  async function copyFromWaitingDialog(btn, text, idleAriaLabel) {
     try {
-      await navigator.clipboard.writeText(prompt);
-      const el = document.getElementById('waitingClipboard');
-      const label = el.querySelector('.copy-label');
+      await navigator.clipboard.writeText(text);
+      const label = btn.querySelector('.copy-label');
       label.textContent = 'Copied';
-      el.classList.add('copied');
-      el.setAttribute('aria-label', 'Copied');
+      btn.classList.add('copied');
+      btn.setAttribute('aria-label', 'Copied');
       announceCopy();
       setTimeout(function() {
         label.textContent = 'Copy';
-        el.classList.remove('copied');
-        el.setAttribute('aria-label', 'Copy prompt to clipboard');
+        btn.classList.remove('copied');
+        btn.setAttribute('aria-label', idleAriaLabel);
       }, 2000);
     } catch {}
+  }
+
+  document.getElementById('waitingClipboard').addEventListener('click', function() {
+    copyFromWaitingDialog(this, document.getElementById('waitingPrompt').textContent, 'Copy prompt to clipboard');
+  });
+
+  // Plain-text copy of the unresolved comments the last finish prompt covered,
+  // for pasting into an agent outside Crit's agent flow.
+  let finishCommentsText = '';
+
+  function setFinishCommentsCopy(comments) {
+    finishCommentsText = formatCommentsPlainText(comments);
+    document.getElementById('commentsCopyPreview').textContent =
+      comments.length + ' unresolved comment' + (comments.length === 1 ? '' : 's') + ' as plain text';
+    document.getElementById('commentsCopyRow').style.display = comments.length ? '' : 'none';
+  }
+
+  document.getElementById('commentsClipboard').addEventListener('click', function() {
+    copyFromWaitingDialog(this, finishCommentsText, 'Copy comments to clipboard');
   });
 
   // ===== SSE Client =====
@@ -8347,10 +8393,12 @@
         const el = document.getElementById('waitingEdits');
         if (el && uiState === 'waiting') {
           el.innerHTML = '<span class="waiting-edits-badge"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><line x1="12" y1="7" x2="12" y2="11"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>' + count + ' edit' + (count === 1 ? '' : 's') + '</span>';
-          // Hide prompt copy row and divider once agent starts making edits
+          // Hide copy rows and divider once agent starts making edits
           const copyRow = document.getElementById('promptCopyRow');
+          const commentsCopyRow = document.getElementById('commentsCopyRow');
           const divider = document.getElementById('waitingDivider');
           if (copyRow) copyRow.style.display = 'none';
+          if (commentsCopyRow) commentsCopyRow.style.display = 'none';
           if (divider) divider.style.display = 'none';
           if (waitingNotApproved) {
             document.getElementById('waitingMessage').textContent = 'Waiting for your agent to finish...';

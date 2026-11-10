@@ -470,7 +470,8 @@
   // uiState transition via the onWaiting/onApproved callbacks.
   //
   // opts:
-  //   onWaiting()        — called after a non-approved finish (caller flips uiState).
+  //   onWaiting(comments) — called after a non-approved finish (caller flips uiState).
+  //                        Receives the unresolved comments the prompt covers.
   //   onApproved(prompt) — called after an approved finish. Receives the prompt string.
   //   onError(err)       — error surfacer (caller decides toast vs. console). Default: console.error.
   //   dedup              — optional inflight flag (window.crit.live.inflight.makeInFlightFlag()).
@@ -579,7 +580,7 @@
       }
 
       if (approved && typeof o.onApproved === 'function') o.onApproved(prompt);
-      else if (!approved && typeof o.onWaiting === 'function') o.onWaiting();
+      else if (!approved && typeof o.onWaiting === 'function') o.onWaiting(data.comments || []);
 
       // Must run after onApproved: the waiting overlay is display:none until
       // the caller flips uiState to 'waiting', and focus() on a hidden Cancel
